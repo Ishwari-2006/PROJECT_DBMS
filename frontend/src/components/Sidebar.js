@@ -1,0 +1,41 @@
+import { NavLink } from "react-router-dom";
+
+function Sidebar() {
+  const navItems = [
+    { to: "/", label: "Dashboard" },
+    { to: "/consumers", label: "Consumers" },
+    { to: "/connections", label: "Connections" },
+    { to: "/meters", label: "Meters" },
+    { to: "/records", label: "Records" },
+    { to: "/tariffs", label: "Tariff Plans" },
+    { to: "/bills", label: "Bills" },
+    { to: "/payments", label: "Payments" },
+    { to: "/connection-tariffs", label: "Connection Tariffs" }
+  ];
+
+  return (
+    <aside className="sidebar">
+      <div className="brand-block">
+        <h2>GridFlow</h2>
+        <p>Utility Suite</p>
+      </div>
+
+      <ul className="sidebar-nav">
+        {navItems.map((item) => (
+          <li key={item.to}>
+            <NavLink
+              to={item.to}
+              className={({ isActive }) =>
+                `sidebar-link${isActive ? " sidebar-link-active" : ""}`
+              }
+            >
+              {item.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
+export default Sidebar;
