@@ -3,6 +3,7 @@ import { useState } from "react";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NAME_REGEX = /^[A-Za-z ]{2,50}$/;
 const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+const DEPARTMENTS = ["Electricity", "Gas", "Water"];
 
 const getUsers = () => {
   try {
@@ -22,7 +23,8 @@ function AuthPage({ onAuthSuccess }) {
     name: "",
     email: "",
     password: "",
-    confirmPassword: ""
+    confirmPassword: "",
+    department: "Electricity"
   });
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
@@ -45,6 +47,9 @@ function AuthPage({ onAuthSuccess }) {
     if (!STRONG_PASSWORD_REGEX.test(form.password)) {
       nextErrors.password = "Password must be 8+ chars with upper, lower, number, and symbol.";
     }
+    if (!DEPARTMENTS.includes(form.department)) {
+      nextErrors.department = "Select a valid department.";
+    }
     if (form.password !== form.confirmPassword) {
       nextErrors.confirmPassword = "Passwords do not match.";
     }
@@ -60,6 +65,9 @@ function AuthPage({ onAuthSuccess }) {
     }
     if (!form.password) {
       nextErrors.password = "Password is required.";
+    }
+    if (!DEPARTMENTS.includes(form.department)) {
+      nextErrors.department = "Select a valid department.";
     }
 
     return nextErrors;
@@ -83,11 +91,12 @@ function AuthPage({ onAuthSuccess }) {
     const user = {
       name: form.name.trim(),
       email: form.email.trim().toLowerCase(),
-      password: form.password
+      password: form.password,
+      department: form.department
     };
 
     setUsers([...users, user]);
-    onAuthSuccess({ name: user.name, email: user.email });
+    onAuthSuccess({ name: user.name, email: user.email, department: user.department });
   };
 
   const handleSignIn = () => {
@@ -101,15 +110,29 @@ function AuthPage({ onAuthSuccess }) {
     const user = users.find(
       (u) =>
         u.email.toLowerCase() === form.email.trim().toLowerCase() &&
-        u.password === form.password
+        u.password === form.password &&
+        (u.department || form.department) === form.department
     );
 
     if (!user) {
-      setMessage("Invalid email or password.");
+      setMessage("Invalid credentials or wrong department selected.");
       return;
     }
 
-    onAuthSuccess({ name: user.name, email: user.email });
+    if (!user.department) {
+      const updatedUsers = users.map((u) =>
+        u.email.toLowerCase() === user.email.toLowerCase()
+          ? { ...u, department: form.department }
+          : u
+      );
+      setUsers(updatedUsers);
+    }
+
+    onAuthSuccess({
+      name: user.name,
+      email: user.email,
+      department: user.department || form.department
+    });
   };
 
   const handleSubmit = (e) => {
@@ -175,6 +198,21 @@ function AuthPage({ onAuthSuccess }) {
             placeholder="name@example.com"
           />
           {errors.email && <small className="auth-error">{errors.email}</small>}
+        </div>
+
+        <div className="auth-field-wrap">
+          <label>Department</label>
+          <select
+            value={form.department}
+            onChange={(e) => updateField("department", e.target.value)}
+          >
+            {DEPARTMENTS.map((department) => (
+              <option key={department} value={department}>
+                {department}
+              </option>
+            ))}
+          </select>
+          {errors.department && <small className="auth-error">{errors.department}</small>}
         </div>
 
         <div className="auth-field-wrap">

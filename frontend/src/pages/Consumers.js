@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import TableControls from "../components/TableControls";
+import Modal from "../components/Modal";
+import TableSearch from "../components/TableSearch";
 
 function Consumers() {
   const [data, setData] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [searchField, setSearchField] = useState("consumer_id");
+  const [searchTerm, setSearchTerm] = useState("");
   const [form, setForm] = useState({
     name: "",
     address: "",
@@ -19,7 +25,7 @@ function Consumers() {
   const fetchConsumers = () => {
     axios.get("http://127.0.0.1:5000/consumers")
       .then(res => setData(res.data))
-      .catch(err => console.log(err));
+      .catch(() => setData([]));
   };
 
   const handleChange = (e) => {
@@ -50,11 +56,12 @@ function Consumers() {
         consumer_type: "Residential",
         registration_date: ""
       });
+      setShowForm(false);
 
       fetchConsumers();
 
     } catch (err) {
-      console.log("ERROR:", err);
+      alert(err?.response?.data?.message || "Failed to save consumer");
     }
   };
 
@@ -67,55 +74,130 @@ function Consumers() {
     }
   };
 
+  const handleEditById = (id) => {
+    const consumer = data.find((c) => Number(c.consumer_id) === Number(id));
+    if (!consumer) {
+      alert("Consumer not found");
+      return;
+    }
+
+    setForm({
+      name: consumer.name,
+      address: consumer.address,
+      contact_no: consumer.contact_no,
+      consumer_type: consumer.consumer_type,
+      registration_date: consumer.registration_date?.split("T")[0] || ""
+    });
+    setEditId(consumer.consumer_id);
+    setShowForm(true);
+  };
+
+  const handleDeleteById = async (id) => {
+    const consumer = data.find((c) => Number(c.consumer_id) === Number(id));
+    if (!consumer) {
+      alert("Consumer not found");
+      return;
+    }
+    await handleDelete(consumer.consumer_id);
+  };
+
+  const filteredData = data.filter((consumer) => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return true;
+    }
+
+    const valueMap = {
+      consumer_id: consumer.consumer_id,
+      name: consumer.name
+    };
+
+    return String(valueMap[searchField] ?? "").toLowerCase().includes(term);
+  });
+
   return (
     <div>
       <h1>Consumers</h1>
 
-      {/* FORM */}
-      <div style={{ marginBottom: "20px" }}>
-        <input
-          name="name"
-          placeholder="Name"
-          value={form.name}
-          onChange={handleChange}
-        />
-        <input
-          name="address"
-          placeholder="Address"
-          value={form.address}
-          onChange={handleChange}
-        />
-        <input
-          name="contact_no"
-          placeholder="Contact"
-          value={form.contact_no}
-          onChange={handleChange}
-        />
+      <TableControls
+        entityLabel="Consumer"
+        onInsert={() => {
+          setEditId(null);
+          setForm({
+            name: "",
+            address: "",
+            contact_no: "",
+            consumer_type: "Residential",
+            registration_date: ""
+          });
+          setShowForm(true);
+        }}
+        onEditById={handleEditById}
+        onDeleteById={handleDeleteById}
+      />
 
-        <select
-          name="consumer_type"
-          value={form.consumer_type}
-          onChange={handleChange}
-        >
-          <option>Residential</option>
-          <option>Commercial</option>
-          <option>Industrial</option>
-        </select>
+      <TableSearch
+        title="Consumers"
+        field={searchField}
+        term={searchTerm}
+        options={[
+          { value: "consumer_id", label: "ID" },
+          { value: "name", label: "Name" }
+        ]}
+        onFieldChange={setSearchField}
+        onTermChange={setSearchTerm}
+      />
 
-        <input
-          type="date"
-          name="registration_date"
-          value={form.registration_date}
-          onChange={handleChange}
-        />
-
-        <button
-          style={{ marginLeft: "10px" }}
-          onClick={handleSubmit}
-        >
-          {editId ? "Update" : "Add"}
-        </button>
-      </div>
+      <Modal
+        open={showForm}
+        title={editId ? "Edit Consumer" : "Insert Consumer"}
+        onClose={() => setShowForm(false)}
+        footer={(
+          <>
+            <button type="button" className="modal-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" onClick={handleSubmit}>{editId ? "Update" : "Add"}</button>
+          </>
+        )}
+      >
+        <div className="modal-grid">
+          <input
+            className="full-span"
+            name="name"
+            placeholder="Name"
+            value={form.name}
+            onChange={handleChange}
+          />
+          <input
+            className="full-span"
+            name="address"
+            placeholder="Address"
+            value={form.address}
+            onChange={handleChange}
+          />
+          <input
+            name="contact_no"
+            placeholder="Contact"
+            value={form.contact_no}
+            onChange={handleChange}
+          />
+          <select
+            name="consumer_type"
+            value={form.consumer_type}
+            onChange={handleChange}
+          >
+            <option>Residential</option>
+            <option>Commercial</option>
+            <option>Industrial</option>
+          </select>
+          <input
+            className="full-span"
+            type="date"
+            name="registration_date"
+            value={form.registration_date}
+            onChange={handleChange}
+          />
+        </div>
+      </Modal>
 
       {/* TABLE */}
       <table border="1" cellPadding="10">
@@ -127,12 +209,11 @@ function Consumers() {
             <th>Contact</th>
             <th>Type</th>
             <th>Registration Date</th>
-            <th>Actions</th>
           </tr>
         </thead>
 
         <tbody>
-          {data.map((c) => (
+          {filteredData.map((c) => (
             <tr key={c.consumer_id}>
               <td>{c.consumer_id}</td>
               <td>{c.name}</td>
@@ -140,27 +221,6 @@ function Consumers() {
               <td>{c.contact_no}</td>
               <td>{c.consumer_type}</td>
               <td>{c.registration_date ? c.registration_date.split("T")[0] : ""}</td>
-              <td>
-                <button onClick={() => handleDelete(c.consumer_id)}>
-                  Delete
-                </button>
-
-                <button
-                  onClick={() => {
-                    setForm({
-                      name: c.name,
-                      address: c.address,
-                      contact_no: c.contact_no,
-                      consumer_type: c.consumer_type,
-                      registration_date: c.registration_date?.split("T")[0]
-                    });
-                    setEditId(c.consumer_id);
-                  }}
-                  style={{ marginLeft: "10px" }}
-                >
-                  Edit
-                </button>
-              </td>
             </tr>
           ))}
         </tbody>

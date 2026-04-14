@@ -1,11 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import TableControls from "../components/TableControls";
+import Modal from "../components/Modal";
+import TableSearch from "../components/TableSearch";
 
-function ConnectionTariffs() {
+function ConnectionTariffs({ department }) {
   const [data, setData] = useState([]);
   const [connections, setConnections] = useState([]);
   const [tariffs, setTariffs] = useState([]);
   const [editId, setEditId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [searchField, setSearchField] = useState("connection_tariff_id");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [form, setForm] = useState({
     connection_id: "",
@@ -14,16 +20,41 @@ function ConnectionTariffs() {
     end_date: ""
   });
 
+  const fetchData = useCallback(() => {
+    Promise.all([
+      axios.get("http://127.0.0.1:5000/connections"),
+      axios.get("http://127.0.0.1:5000/tariffs"),
+      axios.get("http://127.0.0.1:5000/connection-tariffs")
+    ]).then(([connectionsRes, tariffsRes, connectionTariffsRes]) => {
+      const filteredConnections = connectionsRes.data.filter(
+        (c) => c.service_type === department
+      );
+      const filteredTariffs = tariffsRes.data.filter(
+        (t) => t.service_type === department
+      );
+
+      const connectionIds = new Set(filteredConnections.map((c) => Number(c.connection_id)));
+      const tariffIds = new Set(filteredTariffs.map((t) => Number(t.tariff_id)));
+
+      const filteredConnectionTariffs = connectionTariffsRes.data.filter(
+        (ct) =>
+          connectionIds.has(Number(ct.connection_id)) &&
+          tariffIds.has(Number(ct.tariff_id))
+      );
+
+      setConnections(filteredConnections);
+      setTariffs(filteredTariffs);
+      setData(filteredConnectionTariffs);
+    }).catch(() => {
+      setConnections([]);
+      setTariffs([]);
+      setData([]);
+    });
+  }, [department]);
+
   useEffect(() => {
     fetchData();
-    axios.get("http://127.0.0.1:5000/connections").then(res => setConnections(res.data));
-    axios.get("http://127.0.0.1:5000/tariffs").then(res => setTariffs(res.data));
-  }, []);
-
-  const fetchData = () => {
-    axios.get("http://127.0.0.1:5000/connection-tariffs")
-      .then(res => setData(res.data));
-  };
+  }, [fetchData]);
 
   const handleSubmit = async () => {
     try {
@@ -40,10 +71,11 @@ function ConnectionTariffs() {
         start_date: "",
         end_date: ""
       });
+      setShowForm(false);
 
       fetchData();
     } catch (err) {
-      console.log(err);
+      alert(err?.response?.data?.message || "Failed to save connection tariff");
     }
   };
 
@@ -56,41 +88,127 @@ function ConnectionTariffs() {
     }
   };
 
+  const handleEditById = (id) => {
+    const row = data.find((d) => Number(d.connection_tariff_id) === Number(id));
+    if (!row) {
+      alert("Connection tariff not found");
+      return;
+    }
+
+    setForm({
+      connection_id: row.connection_id,
+      tariff_id: row.tariff_id,
+      start_date: row.start_date?.split("T")[0] || "",
+      end_date: row.end_date?.split("T")[0] || ""
+    });
+    setEditId(row.connection_tariff_id);
+    setShowForm(true);
+  };
+
+  const handleDeleteById = async (id) => {
+    const row = data.find((d) => Number(d.connection_tariff_id) === Number(id));
+    if (!row) {
+      alert("Connection tariff not found");
+      return;
+    }
+    await handleDelete(row.connection_tariff_id);
+  };
+
+  const filteredData = data.filter((row) => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return true;
+    }
+
+    const valueMap = {
+      connection_tariff_id: row.connection_tariff_id,
+      connection_id: row.connection_id,
+      tariff_id: row.plan_name || row.tariff_id
+    };
+
+    return String(valueMap[searchField] ?? "").toLowerCase().includes(term);
+  });
+
   return (
     <div>
       <h1>Connection Tariffs</h1>
+      <p style={{ marginTop: "-8px", color: "#3f6761" }}>Department: {department}</p>
 
-      <select value={form.connection_id}
-        onChange={e => setForm({...form, connection_id:e.target.value})}>
-        <option value="">Select Connection</option>
-        {connections.map(c => (
-          <option key={c.connection_id} value={c.connection_id}>
-            {c.connection_id}
-          </option>
-        ))}
-      </select>
+      <TableControls
+        entityLabel="Connection Tariff"
+        onInsert={() => {
+          setEditId(null);
+          setForm({
+            connection_id: "",
+            tariff_id: "",
+            start_date: "",
+            end_date: ""
+          });
+          setShowForm(true);
+        }}
+        onEditById={handleEditById}
+        onDeleteById={handleDeleteById}
+      />
 
-      <select value={form.tariff_id}
-        onChange={e => setForm({...form, tariff_id:e.target.value})}>
-        <option value="">Select Plan</option>
-        {tariffs.map(t => (
-          <option key={t.tariff_id} value={t.tariff_id}>
-            {t.service_type} - {t.consumer_type}
-          </option>
-        ))}
-      </select>
+      <TableSearch
+        title="Connection Tariffs"
+        field={searchField}
+        term={searchTerm}
+        options={[
+          { value: "connection_tariff_id", label: "ID" },
+          { value: "connection_id", label: "Connection ID" },
+          { value: "tariff_id", label: "Tariff / Plan" }
+        ]}
+        onFieldChange={setSearchField}
+        onTermChange={setSearchTerm}
+      />
 
-      <input type="date"
-        value={form.start_date}
-        onChange={e => setForm({...form, start_date:e.target.value})} />
-
-      <input type="date"
-        value={form.end_date}
-        onChange={e => setForm({...form, end_date:e.target.value})} />
-
-      <button onClick={handleSubmit}>
-        {editId ? "Update" : "Add"}
-      </button>
+      <Modal
+        open={showForm}
+        title={editId ? "Edit Connection Tariff" : "Insert Connection Tariff"}
+        onClose={() => setShowForm(false)}
+        footer={(
+          <>
+            <button type="button" className="modal-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" onClick={handleSubmit}>{editId ? "Update" : "Add"}</button>
+          </>
+        )}
+      >
+        <div className="modal-grid">
+          <select
+            value={form.connection_id}
+            onChange={(e) => setForm({ ...form, connection_id: e.target.value })}
+          >
+            <option value="">Select Connection</option>
+            {connections.map((c) => (
+              <option key={c.connection_id} value={c.connection_id}>
+                {c.connection_id}
+              </option>
+            ))}
+          </select>
+          <select
+            value={form.tariff_id}
+            onChange={(e) => setForm({ ...form, tariff_id: e.target.value })}
+          >
+            <option value="">Select Plan</option>
+            {tariffs.map((t) => (
+              <option key={t.tariff_id} value={t.tariff_id}>
+                {t.consumer_type} - Tariff #{t.tariff_id}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={form.start_date}
+            onChange={(e) => setForm({ ...form, start_date: e.target.value })}
+          />
+          <input
+            type="date"
+            value={form.end_date}
+            onChange={(e) => setForm({ ...form, end_date: e.target.value })}
+          />
+        </div>
+      </Modal>
 
       <table border="1">
         <thead>
@@ -100,32 +218,16 @@ function ConnectionTariffs() {
             <th>Tariff</th>
             <th>Start Date</th>
             <th>End Date</th>
-            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {data.map(d => (
+          {filteredData.map(d => (
             <tr key={d.connection_tariff_id}>
               <td>{d.connection_tariff_id}</td>
               <td>{d.connection_id}</td>
               <td>{d.plan_name || d.tariff_id}</td>
               <td>{d.start_date?.split("T")[0]}</td>
               <td>{d.end_date ? d.end_date.split("T")[0] : "Active"}</td>
-              <td>
-                <button onClick={() => handleDelete(d.connection_tariff_id)}>Delete</button>
-
-                <button onClick={() => {
-                  setForm({
-                    connection_id: d.connection_id,
-                    tariff_id: d.tariff_id,
-                    start_date: d.start_date?.split("T")[0] || "",
-                    end_date: d.end_date?.split("T")[0] || ""
-                  });
-                  setEditId(d.connection_tariff_id);
-                }}>
-                  Edit
-                </button>
-              </td>
             </tr>
           ))}
         </tbody>

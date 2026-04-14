@@ -28,11 +28,35 @@ body {
   font-family: "Poppins", "Segoe UI", sans-serif;
   color: var(--ink-1);
   background:
-    radial-gradient(circle at 8% 16%, rgba(15, 139, 141, 0.14), transparent 34%),
-    radial-gradient(circle at 88% 9%, rgba(255, 127, 80, 0.2), transparent 38%),
+    radial-gradient(circle at 10% 14%, rgba(15, 139, 141, 0.2), transparent 34%),
+    radial-gradient(circle at 88% 10%, rgba(255, 127, 80, 0.24), transparent 36%),
+    repeating-linear-gradient(
+      125deg,
+      rgba(17, 95, 97, 0.08) 0 2px,
+      transparent 2px 20px
+    ),
+    repeating-linear-gradient(
+      35deg,
+      rgba(255, 209, 102, 0.08) 0 2px,
+      transparent 2px 22px
+    ),
     linear-gradient(145deg, var(--bg-0), var(--bg-1));
+  background-attachment: fixed;
+  position: relative;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 20% 22%, rgba(255, 255, 255, 0.42) 0 2px, transparent 2px),
+    radial-gradient(circle at 76% 64%, rgba(255, 255, 255, 0.35) 0 2px, transparent 2px);
+  background-size: 22px 22px, 28px 28px;
+  opacity: 0.45;
 }
 
 #root {
@@ -315,9 +339,15 @@ body {
   font-weight: 600;
 }
 
-.auth-field-wrap input {
+.auth-field-wrap input,
+.auth-field-wrap select {
   width: 100%;
   margin: 0;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 0 12px;
+  font-family: inherit;
 }
 
 .auth-error {
@@ -334,8 +364,11 @@ body {
 }
 
 .auth-submit {
-  width: 100%;
-  margin: 6px 0 0;
+  width: 180px;
+  display: block;
+  margin: 10px auto 0;
+  border-radius: 999px;
+  height: 44px;
   background: linear-gradient(120deg, var(--brand), #0ea5a7) !important;
 }
 
@@ -361,6 +394,129 @@ body {
   color: #123f3a;
   font-family: "Space Grotesk", "Poppins", sans-serif;
   letter-spacing: 0.2px;
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0 18px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 30, 31, 0.52);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 50;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 20px;
+  border: 1px solid rgba(52, 96, 90, 0.16);
+  box-shadow: 0 26px 60px rgba(6, 26, 25, 0.28);
+  padding: 20px;
+}
+
+.modal-small {
+  width: min(420px, 100%);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-family: "Space Grotesk", "Poppins", sans-serif;
+  color: var(--ink-1);
+}
+
+.modal-close {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 0;
+  background: #edf6f5 !important;
+  color: #23514c !important;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.modal-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.modal-secondary {
+  background: linear-gradient(120deg, #d9ece9, #edf6f5) !important;
+  color: #204742 !important;
+}
+
+.modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modal-grid .full-span {
+  grid-column: 1 / -1;
+}
+
+.modal-grid input,
+.modal-grid select {
+  width: 100%;
+  margin: 0;
+}
+
+.table-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(52, 96, 90, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.table-search-title {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.table-search input,
+.table-search select {
+  margin: 0;
+  min-width: 180px;
+}
+
+@media (max-width: 640px) {
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes rise-in {

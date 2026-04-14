@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import TableControls from "../components/TableControls";
+import Modal from "../components/Modal";
+import TableSearch from "../components/TableSearch";
 
-function Records() {
+function Records({ department }) {
   const [data, setData] = useState([]);
   const [meters, setMeters] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [searchField, setSearchField] = useState("reading_id");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [form, setForm] = useState({
     meter_id: "",
@@ -15,20 +21,40 @@ function Records() {
   const [editId, setEditId] = useState(null);
 
   // FETCH DATA
+  const fetchRecords = useCallback(() => {
+    Promise.all([
+      axios.get("http://127.0.0.1:5000/connections"),
+      axios.get("http://127.0.0.1:5000/meters"),
+      axios.get("http://127.0.0.1:5000/records")
+    ])
+      .then(([connectionsRes, metersRes, recordsRes]) => {
+        const connectionIds = new Set(
+          connectionsRes.data
+            .filter((c) => c.service_type === department)
+            .map((c) => Number(c.connection_id))
+        );
+
+        const filteredMeters = metersRes.data.filter((m) =>
+          connectionIds.has(Number(m.connection_id))
+        );
+        const meterIds = new Set(filteredMeters.map((m) => Number(m.meter_id)));
+
+        const filteredRecords = recordsRes.data.filter((r) =>
+          meterIds.has(Number(r.meter_id))
+        );
+
+        setMeters(filteredMeters);
+        setData(filteredRecords);
+      })
+      .catch(() => {
+        setMeters([]);
+        setData([]);
+      });
+  }, [department]);
+
   useEffect(() => {
     fetchRecords();
-    axios
-      .get("http://127.0.0.1:5000/meters")
-      .then((res) => setMeters(res.data))
-      .catch((err) => console.log(err));
-  }, []);
-
-  const fetchRecords = () => {
-    axios
-      .get("http://127.0.0.1:5000/records")
-      .then((res) => setData(res.data))
-      .catch((err) => console.log(err));
-  };
+  }, [fetchRecords]);
 
   // HANDLE INPUT
   const handleChange = (e) => {
@@ -70,11 +96,12 @@ function Records() {
         previous_reading: "",
         current_reading: ""
       });
+      setShowForm(false);
 
       fetchRecords();
 
     } catch (err) {
-      console.log("ERROR:", err);
+      alert(err?.response?.data?.message || "Failed to save record");
     }
   };
 
@@ -88,53 +115,134 @@ function Records() {
     }
   };
 
+  const handleEditById = (id) => {
+    const record = data.find((r) => Number(r.reading_id) === Number(id));
+    if (!record) {
+      alert("Record not found");
+      return;
+    }
+
+    setForm({
+      meter_id: record.meter_id,
+      reading_date: record.reading_date?.split("T")[0],
+      previous_reading: record.previous_reading,
+      current_reading: record.current_reading
+    });
+    setEditId(record.reading_id);
+    setShowForm(true);
+  };
+
+  const handleDeleteById = async (id) => {
+    const record = data.find((r) => Number(r.reading_id) === Number(id));
+    if (!record) {
+      alert("Record not found");
+      return;
+    }
+    await handleDelete(record.reading_id);
+  };
+
+  const getMeterNumber = (meterId) => {
+    const meter = meters.find((item) => Number(item.meter_id) === Number(meterId));
+    return meter ? meter.meter_number : "";
+  };
+
+  const filteredData = data.filter((record) => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return true;
+    }
+
+    const valueMap = {
+      reading_id: record.reading_id,
+      meter_number: getMeterNumber(record.meter_id),
+      meter_id: record.meter_id
+    };
+
+    return String(valueMap[searchField] ?? "").toLowerCase().includes(term);
+  });
+
   return (
     <div>
       <h1>Records</h1>
+      <p style={{ marginTop: "-8px", color: "#3f6761" }}>Department: {department}</p>
 
-      {/* FORM */}
-      <div style={{ marginBottom: "20px" }}>
-        <select
-          name="meter_id"
-          value={form.meter_id}
-          onChange={handleChange}
-        >
-          <option value="">Select Meter</option>
-          {meters.map((m) => (
-            <option key={m.meter_id} value={m.meter_id}>
-              {m.meter_id} - {m.meter_number}
-            </option>
-          ))}
-        </select>
+      <TableControls
+        entityLabel="Record"
+        onInsert={() => {
+          setEditId(null);
+          setForm({
+            meter_id: "",
+            reading_date: "",
+            previous_reading: "",
+            current_reading: ""
+          });
+          setShowForm(true);
+        }}
+        onEditById={handleEditById}
+        onDeleteById={handleDeleteById}
+      />
 
-        <input
-          type="date"
-          name="reading_date"
-          value={form.reading_date}
-          onChange={handleChange}
-        />
+      <TableSearch
+        title="Records"
+        field={searchField}
+        term={searchTerm}
+        options={[
+          { value: "reading_id", label: "ID" },
+          { value: "meter_number", label: "Meter Number" },
+          { value: "meter_id", label: "Meter ID" }
+        ]}
+        onFieldChange={setSearchField}
+        onTermChange={setSearchTerm}
+      />
 
-        <input
-          name="previous_reading"
-          placeholder="Previous Reading"
-          value={form.previous_reading}
-          onChange={handleChange}
-        />
+      <Modal
+        open={showForm}
+        title={editId ? "Edit Record" : "Insert Record"}
+        onClose={() => setShowForm(false)}
+        footer={(
+          <>
+            <button type="button" className="modal-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" onClick={handleSubmit}>{editId ? "Update" : "Add"}</button>
+          </>
+        )}
+      >
+        <div className="modal-grid">
+          <select
+            className="full-span"
+            name="meter_id"
+            value={form.meter_id}
+            onChange={handleChange}
+          >
+            <option value="">Select Meter</option>
+            {meters.map((m) => (
+              <option key={m.meter_id} value={m.meter_id}>
+                {m.meter_id} - {m.meter_number}
+              </option>
+            ))}
+          </select>
 
-        <input
-          name="current_reading"
-          placeholder="Current Reading"
-          value={form.current_reading}
-          onChange={handleChange}
-        />
+          <input
+            type="date"
+            name="reading_date"
+            value={form.reading_date}
+            onChange={handleChange}
+          />
 
-        <button
-          style={{ marginLeft: "10px" }}
-          onClick={handleSubmit}
-        >
-          {editId ? "Update" : "Add"}
-        </button>
-      </div>
+          <input
+            name="previous_reading"
+            placeholder="Previous Reading"
+            value={form.previous_reading}
+            onChange={handleChange}
+          />
+
+          <input
+            name="current_reading"
+            placeholder="Current Reading"
+            value={form.current_reading}
+            onChange={handleChange}
+          />
+        </div>
+      </Modal>
 
       {/* TABLE */}
       <table border="1" cellPadding="10">
@@ -146,12 +254,11 @@ function Records() {
             <th>Previous</th>
             <th>Current</th>
             <th>Units</th>
-            <th>Action</th>
           </tr>
         </thead>
 
         <tbody>
-          {data.map((r) => (
+          {filteredData.map((r) => (
             <tr key={r.reading_id}>
               <td>{r.reading_id}</td>
               <td>{r.meter_id}</td>
@@ -163,28 +270,6 @@ function Records() {
               <td>{r.previous_reading}</td>
               <td>{r.current_reading}</td>
               <td>{r.consumption_units}</td>
-
-              <td>
-                <button
-                  onClick={() => handleDelete(r.reading_id)}
-                >
-                  Delete
-                </button>
-
-                <button
-                  onClick={() => {
-                    setForm({
-                      meter_id: r.meter_id,
-                      reading_date: r.reading_date?.split("T")[0],
-                      previous_reading: r.previous_reading,
-                      current_reading: r.current_reading
-                    });
-                    setEditId(r.reading_id);
-                  }}
-                >
-                  Edit
-                </button>
-              </td>
             </tr>
           ))}
         </tbody>
