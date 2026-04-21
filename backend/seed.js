@@ -69,20 +69,19 @@ async function ensureMeter(connectionId) {
 
 async function ensureRecord(meterId) {
   const existing = await dbQuery(
-    "SELECT reading_id FROM Consumption_Record WHERE meter_id = ? ORDER BY reading_date DESC LIMIT 1",
+    "SELECT reading_id FROM Reading_Record WHERE meter_id = ? ORDER BY reading_date DESC LIMIT 1",
     [meterId]
   );
   if (existing.length) return existing[0].reading_id;
 
-  const previous = 1200;
   const current = 1325;
-  const units = current - previous;
+  const units = 125;
 
-  const readingId = await nextId("Consumption_Record", "reading_id");
+  const readingId = await nextId("Reading_Record", "reading_id");
   await dbQuery(
-    `INSERT INTO Consumption_Record (reading_id, previous_reading, current_reading, consumption_units, reading_date, meter_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [readingId, previous, current, units, "2026-04-05", meterId]
+    `INSERT INTO Reading_Record (reading_id, current_reading, consumption_units, reading_date, meter_id)
+     VALUES (?, ?, ?, ?, ?)`,
+    [readingId, current, units, "2026-04-05", meterId]
   );
   return readingId;
 }
@@ -136,7 +135,7 @@ async function ensureBill(connectionId, readingId) {
   if (existing.length) return existing[0].bill_id;
 
   const readingRows = await dbQuery(
-    "SELECT consumption_units FROM Consumption_Record WHERE reading_id = ?",
+    "SELECT consumption_units FROM Reading_Record WHERE reading_id = ?",
     [readingId]
   );
   const tariffRows = await dbQuery(

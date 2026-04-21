@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NAME_REGEX = /^[A-Za-z ]{2,50}$/;
@@ -19,6 +20,8 @@ const setUsers = (users) => {
 
 function AuthPage({ onAuthSuccess }) {
   const [mode, setMode] = useState("signin");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -28,6 +31,21 @@ function AuthPage({ onAuthSuccess }) {
   });
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setMode("signin");
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setForm({
+      name: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+      department: "Electricity"
+    });
+    setErrors({});
+    setMessage("");
+  }, []);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -146,18 +164,21 @@ function AuthPage({ onAuthSuccess }) {
 
   return (
     <div className="auth-shell">
+      <Link to="/" className="auth-screen-back">Back</Link>
+
       <div className="auth-hero">
         <h1>GridFlow Utility</h1>
         <p>Secure utility operations with smart billing, meter tracking, and payment workflows.</p>
       </div>
 
-      <form className="auth-card" onSubmit={handleSubmit}>
+      <form className="auth-card" onSubmit={handleSubmit} autoComplete="off">
         <div className="auth-tabs">
           <button
             type="button"
             className={mode === "signin" ? "auth-tab auth-tab-active" : "auth-tab"}
             onClick={() => {
               setMode("signin");
+              setShowConfirmPassword(false);
               setErrors({});
               setMessage("");
             }}
@@ -181,6 +202,7 @@ function AuthPage({ onAuthSuccess }) {
           <div className="auth-field-wrap">
             <label>Name</label>
             <input
+              autoComplete="off"
               value={form.name}
               onChange={(e) => updateField("name", e.target.value)}
               placeholder="Enter your full name"
@@ -193,6 +215,7 @@ function AuthPage({ onAuthSuccess }) {
           <label>Email</label>
           <input
             type="email"
+            autoComplete="off"
             value={form.email}
             onChange={(e) => updateField("email", e.target.value)}
             placeholder="name@example.com"
@@ -217,24 +240,48 @@ function AuthPage({ onAuthSuccess }) {
 
         <div className="auth-field-wrap">
           <label>Password</label>
-          <input
-            type="password"
-            value={form.password}
-            onChange={(e) => updateField("password", e.target.value)}
-            placeholder="Enter password"
-          />
+          <div className="auth-password-wrap">
+            <input
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              value={form.password}
+              onChange={(e) => updateField("password", e.target.value)}
+              placeholder="Enter password"
+            />
+            <button
+              type="button"
+              className="auth-password-toggle"
+              onClick={() => setShowPassword((prev) => !prev)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              title={showPassword ? "Hide password" : "Show password"}
+            >
+              &#128065;
+            </button>
+          </div>
           {errors.password && <small className="auth-error">{errors.password}</small>}
         </div>
 
         {mode === "signup" && (
           <div className="auth-field-wrap">
             <label>Confirm Password</label>
-            <input
-              type="password"
-              value={form.confirmPassword}
-              onChange={(e) => updateField("confirmPassword", e.target.value)}
-              placeholder="Re-enter password"
-            />
+            <div className="auth-password-wrap">
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                autoComplete="new-password"
+                value={form.confirmPassword}
+                onChange={(e) => updateField("confirmPassword", e.target.value)}
+                placeholder="Re-enter password"
+              />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                onClick={() => setShowConfirmPassword((prev) => !prev)}
+                aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+              >
+                &#128065;
+              </button>
+            </div>
             {errors.confirmPassword && <small className="auth-error">{errors.confirmPassword}</small>}
           </div>
         )}

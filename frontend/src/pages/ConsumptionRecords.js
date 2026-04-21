@@ -23,9 +23,8 @@ function Records() {
     <div>
       <h1>Consumption</h1>
 
-      <input placeholder="Previous" onChange={e=>setForm({...form, previous_reading:e.target.value})}/>
-      <input placeholder="Current" onChange={e=>setForm({...form, current_reading:e.target.value})}/>
-      <input placeholder="Units" onChange={e=>setForm({...form, consumption_units:e.target.value})}/>
+      <input placeholder="Current Reading" onChange={e=>setForm({...form, current_reading:e.target.value})}/>
+      <input placeholder="Consumption Units" type="number" onChange={e=>setForm({...form, consumption_units:e.target.value})}/>
       <input type="date" onChange={e=>setForm({...form, reading_date:e.target.value})}/>
 
       <select onChange={e=>setForm({...form, meter_id:e.target.value})}>

@@ -4,7 +4,7 @@ import axios from "axios";
 function Dashboard() {
   const [summary, setSummary] = useState({
     consumers: 0,
-    activeConnections: 0,
+    totalConnections: 0,
     activeMeters: 0,
     pendingBills: 0,
     totalRevenue: 0
@@ -25,7 +25,7 @@ function Dashboard() {
 
       <div className="dashboard-grid">
         <Card title="Total Consumers" value={summary.consumers} />
-        <Card title="Active Connections" value={summary.activeConnections} />
+        <Card title="Total Connections" value={summary.totalConnections} />
         <Card title="Active Meters" value={summary.activeMeters} />
         <Card title="Pending Bills" value={summary.pendingBills} />
         <Card title="Revenue Collected" value={`Rs. ${summary.totalRevenue}`} />

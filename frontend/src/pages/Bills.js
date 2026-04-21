@@ -105,7 +105,9 @@ function Bills({ department }) {
       fetchBills();
 
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save bill");
+      const message = err?.response?.data?.message || "Failed to save bill";
+      const detail = err?.response?.data?.error;
+      alert(detail ? `${message}: ${detail}` : message);
     }
   };
 
@@ -138,7 +140,9 @@ function Bills({ department }) {
       fetchBills();
       alert("Bill generated from tariff plan successfully");
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to generate bill");
+      const message = err?.response?.data?.message || "Failed to generate bill";
+      const detail = err?.response?.data?.error;
+      alert(detail ? `${message}: ${detail}` : message);
     }
   };
 

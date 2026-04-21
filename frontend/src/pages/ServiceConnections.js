@@ -11,6 +11,8 @@ function ServiceConnections({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("connection_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [consumerSearchTerm, setConsumerSearchTerm] = useState("");
+  const [showConsumerDropdown, setShowConsumerDropdown] = useState(false);
 
   const [form, setForm] = useState({
     installation_address: "",
@@ -42,6 +44,15 @@ function ServiceConnections({ department }) {
     return consumer ? consumer.name : "-";
   };
 
+  const getFilteredConsumers = () => {
+    const term = consumerSearchTerm.trim().toLowerCase();
+    if (!term) return [];
+    return consumers.filter((c) =>
+      c.name.toLowerCase().includes(term) || 
+      String(c.consumer_id).includes(term)
+    );
+  };
+
   const handleSubmit = async () => {
     try {
       if (editId) {
@@ -62,6 +73,8 @@ function ServiceConnections({ department }) {
         connection_status: "Active",
         consumer_id: ""
       });
+      setConsumerSearchTerm("");
+      setShowConsumerDropdown(false);
       setShowForm(false);
 
       fetchData();
@@ -86,11 +99,13 @@ function ServiceConnections({ department }) {
       return;
     }
 
+    const selectedConsumer = consumers.find((c) => Number(c.consumer_id) === Number(connection.consumer_id));
     setForm({
       installation_address: connection.installation_address || "",
       connection_status: connection.connection_status || "Active",
       consumer_id: connection.consumer_id || ""
     });
+    setConsumerSearchTerm(selectedConsumer ? selectedConsumer.name : "");
     setEditId(connection.connection_id);
     setShowForm(true);
   };
@@ -133,6 +148,8 @@ function ServiceConnections({ department }) {
             connection_status: "Active",
             consumer_id: ""
           });
+          setConsumerSearchTerm("");
+          setShowConsumerDropdown(false);
           setShowForm(true);
         }}
         onEditById={handleEditById}
@@ -177,17 +194,60 @@ function ServiceConnections({ department }) {
             <option>Active</option>
             <option>Disconnected</option>
           </select>
-          <select
-            value={form.consumer_id}
-            onChange={(e) => setForm({ ...form, consumer_id: e.target.value })}
-          >
-            <option value="">Select Consumer</option>
-            {consumers.map((c) => (
-              <option key={c.consumer_id} value={c.consumer_id}>
-                {c.consumer_id} - {c.name}
-              </option>
-            ))}
-          </select>
+
+          <div style={{ position: "relative", gridColumn: "1 / -1" }}>
+            <input
+              type="text"
+              placeholder="Search Consumer by Name or ID"
+              value={consumerSearchTerm}
+              onChange={(e) => {
+                setConsumerSearchTerm(e.target.value);
+                setShowConsumerDropdown(true);
+              }}
+              onFocus={() => setShowConsumerDropdown(true)}
+              style={{ width: "100%", padding: "8px", boxSizing: "border-box" }}
+            />
+            {showConsumerDropdown && consumerSearchTerm && (
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                right: 0,
+                backgroundColor: "white",
+                border: "1px solid #ccc",
+                borderRadius: "4px",
+                zIndex: 1000,
+                maxHeight: "200px",
+                overflowY: "auto",
+                marginTop: "4px"
+              }}>
+                {getFilteredConsumers().length > 0 ? (
+                  getFilteredConsumers().map((c) => (
+                    <div
+                      key={c.consumer_id}
+                      onClick={() => {
+                        setForm({ ...form, consumer_id: c.consumer_id });
+                        setConsumerSearchTerm(`${c.name} (ID: ${c.consumer_id})`);
+                        setShowConsumerDropdown(false);
+                      }}
+                      style={{
+                        padding: "10px",
+                        cursor: "pointer",
+                        borderBottom: "1px solid #eee",
+                        fontSize: "14px"
+                      }}
+                      onMouseEnter={(e) => e.target.style.backgroundColor = "#f5f5f5"}
+                      onMouseLeave={(e) => e.target.style.backgroundColor = "white"}
+                    >
+                      {c.consumer_id} - {c.name}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: "10px", color: "#999" }}>No consumers found</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
 

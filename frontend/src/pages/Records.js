@@ -14,8 +14,8 @@ function Records({ department }) {
   const [form, setForm] = useState({
     meter_id: "",
     reading_date: "",
-    previous_reading: "",
-    current_reading: ""
+    current_reading: "",
+    consumption_units: ""
   });
 
   const [editId, setEditId] = useState(null);
@@ -66,8 +66,8 @@ function Records({ department }) {
     if (
       !form.meter_id ||
       !form.reading_date ||
-      form.previous_reading === "" ||
-      form.current_reading === ""
+      form.current_reading === "" ||
+      form.consumption_units === ""
     ) {
       alert("Fill all fields");
       return;
@@ -93,8 +93,8 @@ function Records({ department }) {
       setForm({
         meter_id: "",
         reading_date: "",
-        previous_reading: "",
-        current_reading: ""
+        current_reading: "",
+        consumption_units: ""
       });
       setShowForm(false);
 
@@ -125,8 +125,8 @@ function Records({ department }) {
     setForm({
       meter_id: record.meter_id,
       reading_date: record.reading_date?.split("T")[0],
-      previous_reading: record.previous_reading,
-      current_reading: record.current_reading
+      current_reading: record.current_reading,
+      consumption_units: record.consumption_units
     });
     setEditId(record.reading_id);
     setShowForm(true);
@@ -163,7 +163,7 @@ function Records({ department }) {
 
   return (
     <div>
-      <h1>Records</h1>
+      <h1>Reading Records</h1>
       <p style={{ marginTop: "-8px", color: "#3f6761" }}>Department: {department}</p>
 
       <TableControls
@@ -173,8 +173,8 @@ function Records({ department }) {
           setForm({
             meter_id: "",
             reading_date: "",
-            previous_reading: "",
-            current_reading: ""
+            current_reading: "",
+            consumption_units: ""
           });
           setShowForm(true);
         }}
@@ -183,7 +183,7 @@ function Records({ department }) {
       />
 
       <TableSearch
-        title="Records"
+        title="Reading Records"
         field={searchField}
         term={searchTerm}
         options={[
@@ -229,16 +229,17 @@ function Records({ department }) {
           />
 
           <input
-            name="previous_reading"
-            placeholder="Previous Reading"
-            value={form.previous_reading}
+            name="current_reading"
+            placeholder="Current Reading"
+            value={form.current_reading}
             onChange={handleChange}
           />
 
           <input
-            name="current_reading"
-            placeholder="Current Reading"
-            value={form.current_reading}
+            type="number"
+            name="consumption_units"
+            placeholder="Consumption Units"
+            value={form.consumption_units}
             onChange={handleChange}
           />
         </div>
@@ -251,9 +252,8 @@ function Records({ department }) {
             <th>ID</th>
             <th>Meter ID</th>
             <th>Date</th>
-            <th>Previous</th>
-            <th>Current</th>
-            <th>Units</th>
+            <th>Current Reading</th>
+            <th>Consumption Units</th>
           </tr>
         </thead>
 
@@ -267,7 +267,6 @@ function Records({ department }) {
                   ? r.reading_date.split("T")[0]
                   : ""}
               </td>
-              <td>{r.previous_reading}</td>
               <td>{r.current_reading}</td>
               <td>{r.consumption_units}</td>
             </tr>

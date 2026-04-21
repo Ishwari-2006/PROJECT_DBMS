@@ -6,11 +6,10 @@ function Sidebar() {
     { to: "/consumers", label: "Consumers" },
     { to: "/connections", label: "Connections" },
     { to: "/meters", label: "Meters" },
-    { to: "/records", label: "Records" },
+    { to: "/records", label: "Reading Records" },
     { to: "/tariffs", label: "Tariff Plans" },
     { to: "/bills", label: "Bills" },
-    { to: "/payments", label: "Payments" },
-    { to: "/connection-tariffs", label: "Connection Tariffs" }
+    { to: "/payments", label: "Payments" }
   ];
 
   return (
