@@ -13,6 +13,10 @@ import TariffPlans from "./pages/TariffPlans";
 import ConnectionTariffs from "./pages/ConnectionTariffs";
 import AuthPage from "./pages/AuthPage";
 import HomePage from "./pages/HomePage";
+import ConsumerSearch from "./pages/ConsumerSearch";
+import AlertsPage from "./pages/AlertsPage";
+import ReportsPage from "./pages/ReportsPage";
+import AuditLogsPage from "./pages/AuditLogsPage";
 
 function App() {
   const [currentUser, setCurrentUser] = useState(() => {
@@ -36,9 +40,15 @@ function App() {
   useEffect(() => {
     if (currentUser?.department) {
       axios.defaults.headers.common["x-department"] = currentUser.department;
+      axios.defaults.headers.common["x-role"] = currentUser.role || "Operator";
+      axios.defaults.headers.common["x-user-name"] = currentUser.name || "Unknown";
+      axios.defaults.headers.common["x-user-email"] = currentUser.email || "unknown@example.com";
       return;
     }
     delete axios.defaults.headers.common["x-department"];
+    delete axios.defaults.headers.common["x-role"];
+    delete axios.defaults.headers.common["x-user-name"];
+    delete axios.defaults.headers.common["x-user-email"];
   }, [currentUser]);
 
   return (
@@ -54,7 +64,7 @@ function App() {
                 <p>Manage consumers, usage, billing, and payments in one unified dashboard.</p>
               </div>
               <div className="topbar-actions">
-                <span>{currentUser.name} | {currentUser.department}</span>
+                <span>{currentUser.name} | {currentUser.department} | {currentUser.role || "Operator"}</span>
                 <button onClick={handleLogout}>Logout</button>
               </div>
             </header>
@@ -63,11 +73,15 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/consumers" element={<Consumers />} />
+                <Route path="/consumer-search" element={<ConsumerSearch />} />
                 <Route path="/connections" element={<ServiceConnections department={currentUser.department} />} />
                 <Route path="/meters" element={<Meters department={currentUser.department} />} />
                 <Route path="/records" element={<Records department={currentUser.department} />} />
                 <Route path="/bills" element={<Bills department={currentUser.department} />} />
                 <Route path="/payments" element={<Payments department={currentUser.department} />} />
+                <Route path="/alerts" element={<AlertsPage />} />
+                <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/audit-logs" element={<AuditLogsPage currentUser={currentUser} />} />
 
                 <Route path="/tariffs" element={<TariffPlans department={currentUser.department} />} />
                 <Route path="/connection-tariffs" element={<ConnectionTariffs department={currentUser.department} />} />

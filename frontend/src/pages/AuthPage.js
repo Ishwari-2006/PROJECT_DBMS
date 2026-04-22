@@ -5,6 +5,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NAME_REGEX = /^[A-Za-z ]{2,50}$/;
 const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const DEPARTMENTS = ["Electricity", "Gas", "Water"];
+const ROLES = ["Admin", "Operator", "Viewer"];
 
 const getUsers = () => {
   try {
@@ -27,7 +28,8 @@ function AuthPage({ onAuthSuccess }) {
     email: "",
     password: "",
     confirmPassword: "",
-    department: "Electricity"
+    department: "Electricity",
+    role: "Operator"
   });
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
@@ -41,7 +43,8 @@ function AuthPage({ onAuthSuccess }) {
       email: "",
       password: "",
       confirmPassword: "",
-      department: "Electricity"
+      department: "Electricity",
+      role: "Operator"
     });
     setErrors({});
     setMessage("");
@@ -68,6 +71,9 @@ function AuthPage({ onAuthSuccess }) {
     if (!DEPARTMENTS.includes(form.department)) {
       nextErrors.department = "Select a valid department.";
     }
+    if (!ROLES.includes(form.role)) {
+      nextErrors.role = "Select a valid role.";
+    }
     if (form.password !== form.confirmPassword) {
       nextErrors.confirmPassword = "Passwords do not match.";
     }
@@ -86,6 +92,9 @@ function AuthPage({ onAuthSuccess }) {
     }
     if (!DEPARTMENTS.includes(form.department)) {
       nextErrors.department = "Select a valid department.";
+    }
+    if (!ROLES.includes(form.role)) {
+      nextErrors.role = "Select a valid role.";
     }
 
     return nextErrors;
@@ -110,11 +119,17 @@ function AuthPage({ onAuthSuccess }) {
       name: form.name.trim(),
       email: form.email.trim().toLowerCase(),
       password: form.password,
-      department: form.department
+      department: form.department,
+      role: form.role
     };
 
     setUsers([...users, user]);
-    onAuthSuccess({ name: user.name, email: user.email, department: user.department });
+    onAuthSuccess({
+      name: user.name,
+      email: user.email,
+      department: user.department,
+      role: user.role || "Operator"
+    });
   };
 
   const handleSignIn = () => {
@@ -129,7 +144,8 @@ function AuthPage({ onAuthSuccess }) {
       (u) =>
         u.email.toLowerCase() === form.email.trim().toLowerCase() &&
         u.password === form.password &&
-        (u.department || form.department) === form.department
+        (u.department || form.department) === form.department &&
+        (u.role || form.role) === form.role
     );
 
     if (!user) {
@@ -149,7 +165,8 @@ function AuthPage({ onAuthSuccess }) {
     onAuthSuccess({
       name: user.name,
       email: user.email,
-      department: user.department || form.department
+      department: user.department || form.department,
+      role: user.role || form.role || "Operator"
     });
   };
 
@@ -236,6 +253,21 @@ function AuthPage({ onAuthSuccess }) {
             ))}
           </select>
           {errors.department && <small className="auth-error">{errors.department}</small>}
+        </div>
+
+        <div className="auth-field-wrap">
+          <label>Role</label>
+          <select
+            value={form.role}
+            onChange={(e) => updateField("role", e.target.value)}
+          >
+            {ROLES.map((role) => (
+              <option key={role} value={role}>
+                {role}
+              </option>
+            ))}
+          </select>
+          {errors.role && <small className="auth-error">{errors.role}</small>}
         </div>
 
         <div className="auth-field-wrap">

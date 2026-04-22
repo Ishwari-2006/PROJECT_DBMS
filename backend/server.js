@@ -93,6 +93,7 @@ const normalizeSqlDate = (value) => {
 };
 
 const ALLOWED_DEPARTMENTS = ["Electricity", "Gas", "Water"];
+const ALLOWED_ROLES = ["Admin", "Operator", "Viewer"];
 
 const normalizeDepartment = (value) => {
   if (!value) {
@@ -104,7 +105,24 @@ const normalizeDepartment = (value) => {
   return match || null;
 };
 
+const normalizeRole = (value) => {
+  if (!value) {
+    return "Operator";
+  }
+
+  const raw = String(value).trim().toLowerCase();
+  const match = ALLOWED_ROLES.find((role) => role.toLowerCase() === raw);
+  return match || "Operator";
+};
+
 const getDepartmentFromRequest = (req) => normalizeDepartment(req.headers["x-department"]);
+const getRoleFromRequest = (req) => normalizeRole(req.headers["x-role"]);
+
+const getActorFromRequest = (req) => ({
+  role: getRoleFromRequest(req),
+  name: req.headers["x-user-name"] ? String(req.headers["x-user-name"]) : "Unknown",
+  email: req.headers["x-user-email"] ? String(req.headers["x-user-email"]) : "unknown@example.com"
+});
 
 const requireDepartment = (req, res) => {
   const department = getDepartmentFromRequest(req);
@@ -113,6 +131,65 @@ const requireDepartment = (req, res) => {
     return null;
   }
   return department;
+};
+
+const ensureWriteAccess = (req, res) => {
+  const role = getRoleFromRequest(req);
+  if (role === "Viewer") {
+    res.status(403).json({ message: "Viewer role has read-only access" });
+    return false;
+  }
+  return true;
+};
+
+const ensureAdminAccess = (req, res) => {
+  const role = getRoleFromRequest(req);
+  if (role !== "Admin") {
+    res.status(403).json({ message: "Admin access required" });
+    return false;
+  }
+  return true;
+};
+
+const ensureSystemTables = async () => {
+  await dbQuery(
+    `CREATE TABLE IF NOT EXISTS Audit_Log (
+      audit_id INT NOT NULL AUTO_INCREMENT,
+      action_type VARCHAR(20) NOT NULL,
+      entity_name VARCHAR(50) NOT NULL,
+      entity_id VARCHAR(50) DEFAULT NULL,
+      department VARCHAR(50) DEFAULT NULL,
+      actor_role VARCHAR(20) DEFAULT NULL,
+      actor_name VARCHAR(100) DEFAULT NULL,
+      actor_email VARCHAR(120) DEFAULT NULL,
+      payload_json TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (audit_id)
+    )`
+  );
+};
+
+const logAudit = async ({ req, action, entity, entityId, department, payload }) => {
+  try {
+    const actor = getActorFromRequest(req);
+    await dbQuery(
+      `INSERT INTO Audit_Log
+        (action_type, entity_name, entity_id, department, actor_role, actor_name, actor_email, payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        action,
+        entity,
+        entityId ? String(entityId) : null,
+        department || null,
+        actor.role,
+        actor.name,
+        actor.email,
+        payload ? JSON.stringify(payload) : null
+      ]
+    );
+  } catch (error) {
+    console.error("Audit log failed:", error.message);
+  }
 };
 
 const hasConnectionAccess = async (connectionId, department) => {
@@ -324,6 +401,390 @@ app.get("/test", (req, res) => {
   res.send("TEST OK");
 });
 
+app.get("/search/consumers", async (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  const q = String(req.query.q || "").trim();
+  if (!q) {
+    return res.json([]);
+  }
+
+  try {
+    const like = `%${q}%`;
+    const rows = await dbQuery(
+      `SELECT
+        c.consumer_id,
+        c.name,
+        c.contact_no,
+        c.address,
+        c.consumer_type,
+        COUNT(DISTINCT sc.connection_id) AS total_connections,
+        COUNT(DISTINCT CASE WHEN sc.connection_status = 'Active' THEN sc.connection_id END) AS active_connections,
+        COALESCE(SUM(CASE WHEN b.payment_status = 'Unpaid' THEN b.total_amount ELSE 0 END), 0) AS unpaid_amount
+      FROM Consumer c
+      JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
+      LEFT JOIN Bill b ON b.connection_id = sc.connection_id
+      WHERE sc.service_type = ?
+        AND (
+          c.name LIKE ? OR
+          c.contact_no LIKE ? OR
+          CAST(c.consumer_id AS CHAR) LIKE ?
+        )
+      GROUP BY c.consumer_id, c.name, c.contact_no, c.address, c.consumer_type
+      ORDER BY c.name ASC, c.consumer_id ASC
+      LIMIT 25`,
+      [department, like, like, like]
+    );
+    res.json(rows);
+  } catch (error) {
+    return sendError(res, "Failed to search consumers", error);
+  }
+});
+
+app.get("/consumers/:id/profile", async (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  try {
+    const consumerRows = await dbQuery(
+      `SELECT DISTINCT c.*
+       FROM Consumer c
+       JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
+       WHERE c.consumer_id = ? AND sc.service_type = ?`,
+      [req.params.id, department]
+    );
+
+    if (!consumerRows.length) {
+      return res.status(404).json({ message: "Consumer not found" });
+    }
+
+    const readingTable = await getReadingTableName();
+
+    const [connections, meters, records, bills, payments, tariffs] = await Promise.all([
+      dbQuery(
+        `SELECT *
+         FROM Service_Connection
+         WHERE consumer_id = ? AND service_type = ?
+         ORDER BY connection_id ASC`,
+        [req.params.id, department]
+      ),
+      dbQuery(
+        `SELECT m.*
+         FROM Meter m
+         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+         WHERE sc.consumer_id = ? AND sc.service_type = ?
+         ORDER BY m.meter_id ASC`,
+        [req.params.id, department]
+      ),
+      dbQuery(
+        `SELECT r.*
+         FROM ${readingTable} r
+         JOIN Meter m ON m.meter_id = r.meter_id
+         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+         WHERE sc.consumer_id = ? AND sc.service_type = ?
+         ORDER BY r.reading_date DESC, r.reading_id DESC
+         LIMIT 24`,
+        [req.params.id, department]
+      ),
+      dbQuery(
+        `SELECT b.*
+         FROM Bill b
+         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+         WHERE sc.consumer_id = ? AND sc.service_type = ?
+         ORDER BY b.bill_id DESC
+         LIMIT 24`,
+        [req.params.id, department]
+      ),
+      dbQuery(
+        `SELECT p.*
+         FROM Payment p
+         JOIN Bill b ON b.bill_id = p.bill_id
+         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+         WHERE sc.consumer_id = ? AND sc.service_type = ?
+         ORDER BY p.payment_id DESC
+         LIMIT 24`,
+        [req.params.id, department]
+      ),
+      dbQuery(
+        `SELECT
+          ct.connection_tariff_id,
+          ct.connection_id,
+          ct.tariff_id,
+          ct.start_date,
+          ct.end_date,
+          tp.consumer_type,
+          tp.rate_per_unit,
+          tp.fixed_charge,
+          tp.tax_percentage
+         FROM Connection_Tariff ct
+         JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+         JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+         WHERE sc.consumer_id = ? AND sc.service_type = ?
+         ORDER BY ct.connection_tariff_id DESC`,
+        [req.params.id, department]
+      )
+    ]);
+
+    const pendingBills = bills.filter((bill) => String(bill.payment_status).toLowerCase() !== "paid");
+
+    res.json({
+      consumer: consumerRows[0],
+      connections,
+      meters,
+      records,
+      bills,
+      payments,
+      tariffs,
+      quickStats: {
+        totalConnections: connections.length,
+        activeConnections: connections.filter((c) => c.connection_status === "Active").length,
+        totalMeters: meters.length,
+        unpaidBills: pendingBills.length,
+        unpaidAmount: Number(
+          pendingBills.reduce((sum, bill) => sum + Number(bill.total_amount || 0), 0).toFixed(2)
+        )
+      }
+    });
+  } catch (error) {
+    return sendError(res, "Failed to fetch consumer profile", error);
+  }
+});
+
+app.get("/alerts", async (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  try {
+    const readingTable = await getReadingTableName();
+    const [overdueBills, disconnectedConnections, noRecentReading, highConsumption] = await Promise.all([
+      dbQuery(
+        `SELECT
+          b.bill_id,
+          b.bill_number,
+          b.due_date,
+          b.total_amount,
+          c.consumer_id,
+          c.name AS consumer_name,
+          sc.connection_id
+         FROM Bill b
+         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+         JOIN Consumer c ON c.consumer_id = sc.consumer_id
+         WHERE sc.service_type = ?
+           AND b.payment_status <> 'Paid'
+           AND b.due_date < CURDATE()
+         ORDER BY b.due_date ASC
+         LIMIT 25`,
+        [department]
+      ),
+      dbQuery(
+        `SELECT
+          sc.connection_id,
+          sc.connection_status,
+          c.consumer_id,
+          c.name AS consumer_name,
+          sc.installation_address
+         FROM Service_Connection sc
+         JOIN Consumer c ON c.consumer_id = sc.consumer_id
+         WHERE sc.service_type = ? AND sc.connection_status = 'Disconnected'
+         ORDER BY sc.connection_id DESC
+         LIMIT 25`,
+        [department]
+      ),
+      dbQuery(
+        `SELECT
+          m.meter_id,
+          m.meter_number,
+          c.consumer_id,
+          c.name AS consumer_name,
+          MAX(r.reading_date) AS last_reading_date
+         FROM Meter m
+         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+         JOIN Consumer c ON c.consumer_id = sc.consumer_id
+         LEFT JOIN ${readingTable} r ON r.meter_id = m.meter_id
+         WHERE sc.service_type = ?
+         GROUP BY m.meter_id, m.meter_number, c.consumer_id, c.name
+         HAVING last_reading_date IS NULL OR last_reading_date < DATE_SUB(CURDATE(), INTERVAL 45 DAY)
+         ORDER BY last_reading_date ASC
+         LIMIT 25`,
+        [department]
+      ),
+      dbQuery(
+        `SELECT
+          r.reading_id,
+          r.reading_date,
+          r.consumption_units,
+          m.meter_id,
+          c.consumer_id,
+          c.name AS consumer_name
+         FROM ${readingTable} r
+         JOIN Meter m ON m.meter_id = r.meter_id
+         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+         JOIN Consumer c ON c.consumer_id = sc.consumer_id
+         WHERE sc.service_type = ?
+           AND r.reading_date >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)
+           AND r.consumption_units > 1000
+         ORDER BY r.consumption_units DESC
+         LIMIT 25`,
+        [department]
+      )
+    ]);
+
+    res.json({ overdueBills, disconnectedConnections, noRecentReading, highConsumption });
+  } catch (error) {
+    return sendError(res, "Failed to fetch alerts", error);
+  }
+});
+
+app.get("/reports/department-summary", async (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  try {
+    const from = req.query.from ? normalizeSqlDate(req.query.from) : null;
+    const to = req.query.to ? normalizeSqlDate(req.query.to) : null;
+
+    const dateClause = from && to ? "AND b.due_date BETWEEN ? AND ?" : "";
+    const dateParams = from && to ? [from, to] : [];
+
+    const [consumerCount, connectionCount, meterCount, billSummary, paymentSummary] = await Promise.all([
+      dbQuery(
+        `SELECT COUNT(DISTINCT c.consumer_id) AS count
+         FROM Consumer c
+         JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
+         WHERE sc.service_type = ?`,
+        [department]
+      ),
+      dbQuery("SELECT COUNT(*) AS count FROM Service_Connection WHERE service_type = ?", [department]),
+      dbQuery(
+        `SELECT COUNT(*) AS count
+         FROM Meter m
+         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+         WHERE sc.service_type = ?`,
+        [department]
+      ),
+      dbQuery(
+        `SELECT
+          COUNT(*) AS total_bills,
+          COALESCE(SUM(total_amount), 0) AS total_billed,
+          COALESCE(SUM(CASE WHEN payment_status = 'Unpaid' THEN total_amount ELSE 0 END), 0) AS unpaid_amount
+         FROM Bill b
+         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+         WHERE sc.service_type = ? ${dateClause}`,
+        [department, ...dateParams]
+      ),
+      dbQuery(
+        `SELECT COALESCE(SUM(p.amount_paid), 0) AS total_paid
+         FROM Payment p
+         JOIN Bill b ON b.bill_id = p.bill_id
+         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+         WHERE sc.service_type = ?`,
+        [department]
+      )
+    ]);
+
+    res.json({
+      department,
+      period: from && to ? { from, to } : null,
+      consumers: Number(consumerCount[0].count || 0),
+      connections: Number(connectionCount[0].count || 0),
+      meters: Number(meterCount[0].count || 0),
+      totalBills: Number(billSummary[0].total_bills || 0),
+      totalBilled: Number(billSummary[0].total_billed || 0),
+      unpaidAmount: Number(billSummary[0].unpaid_amount || 0),
+      totalPaid: Number(paymentSummary[0].total_paid || 0)
+    });
+  } catch (error) {
+    return sendError(res, "Failed to generate report", error);
+  }
+});
+
+app.get("/reports/department-summary/export.csv", async (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  try {
+    const summaryRows = await dbQuery(
+      `SELECT
+        b.bill_id,
+        b.bill_number,
+        b.billing_period,
+        b.total_amount,
+        b.due_date,
+        b.payment_status,
+        sc.connection_id,
+        c.consumer_id,
+        c.name AS consumer_name
+       FROM Bill b
+       JOIN Service_Connection sc ON sc.connection_id = b.connection_id
+       JOIN Consumer c ON c.consumer_id = sc.consumer_id
+       WHERE sc.service_type = ?
+       ORDER BY b.bill_id DESC`,
+      [department]
+    );
+
+    const headers = [
+      "bill_id",
+      "bill_number",
+      "billing_period",
+      "total_amount",
+      "due_date",
+      "payment_status",
+      "connection_id",
+      "consumer_id",
+      "consumer_name"
+    ];
+
+    const csvRows = [
+      headers.join(","),
+      ...summaryRows.map((row) =>
+        headers
+          .map((header) => {
+            const value = row[header] == null ? "" : String(row[header]).replace(/"/g, '""');
+            return `"${value}"`;
+          })
+          .join(",")
+      )
+    ];
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=${department.toLowerCase()}-billing-report.csv`);
+    res.send(csvRows.join("\n"));
+  } catch (error) {
+    return sendError(res, "Failed to export report", error);
+  }
+});
+
+app.get("/audit-logs", async (req, res) => {
+  if (!ensureAdminAccess(req, res)) {
+    return;
+  }
+
+  try {
+    const limit = Number(req.query.limit || 100);
+    const rows = await dbQuery(
+      `SELECT *
+       FROM Audit_Log
+       ORDER BY audit_id DESC
+       LIMIT ?`,
+      [Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 100]
+    );
+    res.json(rows);
+  } catch (error) {
+    return sendError(res, "Failed to fetch audit logs", error);
+  }
+});
+
 app.get("/dashboard/summary", async (req, res) => {
   const department = requireDepartment(req, res);
   if (!department) {
@@ -404,6 +865,10 @@ app.get("/consumers", (req, res) => {
 });
 
 app.post("/consumers", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -422,6 +887,7 @@ app.post("/consumers", async (req, res) => {
       "INSERT INTO Consumer (consumer_id, name, address, contact_no, consumer_type, registration_date) VALUES (?, ?, ?, ?, ?, ?)",
       [consumer_id, name, address, contact_no, consumer_type, normalizedRegistrationDate]
     );
+    await logAudit({ req, action: "CREATE", entity: "Consumer", entityId: consumer_id, department, payload: req.body });
     res.status(201).json({ message: "Consumer Added", consumer_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add consumer", error: error.message });
@@ -429,6 +895,10 @@ app.post("/consumers", async (req, res) => {
 });
 
 app.put("/consumers/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -448,14 +918,19 @@ app.put("/consumers/:id", async (req, res) => {
   db.query(
     "UPDATE Consumer SET name=?, address=?, contact_no=?, consumer_type=?, registration_date=? WHERE consumer_id=?",
     [name, address, contact_no, consumer_type, normalizedRegistrationDate, req.params.id],
-    (err) => {
+    async (err) => {
       if (err) return sendError(res, "Failed to update consumer", err);
+      await logAudit({ req, action: "UPDATE", entity: "Consumer", entityId: req.params.id, department, payload: req.body });
       res.send("Consumer Updated");
     }
   );
 });
 
 app.delete("/consumers/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -465,8 +940,9 @@ app.delete("/consumers/:id", async (req, res) => {
     return res.status(403).json({ message: "Access denied for this consumer" });
   }
 
-  db.query("DELETE FROM Consumer WHERE consumer_id=?", [req.params.id], (err) => {
+  db.query("DELETE FROM Consumer WHERE consumer_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete consumer", error: err.message });
+    await logAudit({ req, action: "DELETE", entity: "Consumer", entityId: req.params.id, department });
     res.send("Consumer Deleted");
   });
 });
@@ -519,6 +995,10 @@ app.get("/connections", (req, res) => {
 });
 
 app.post("/connections", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -536,6 +1016,7 @@ app.post("/connections", async (req, res) => {
       "INSERT INTO Service_Connection (connection_id, service_type, installation_address, connection_status, consumer_id) VALUES (?, ?, ?, ?, ?)",
       [connection_id, department, installation_address, connection_status, consumer_id]
     );
+    await logAudit({ req, action: "CREATE", entity: "Service_Connection", entityId: connection_id, department, payload: req.body });
     res.status(201).json({ message: "Connection Added", connection_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add connection", error: error.message });
@@ -543,6 +1024,10 @@ app.post("/connections", async (req, res) => {
 });
 
 app.put("/connections/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -561,14 +1046,19 @@ app.put("/connections/:id", async (req, res) => {
   db.query(
     "UPDATE Service_Connection SET service_type=?, installation_address=?, connection_status=?, consumer_id=? WHERE connection_id=?",
     [department, installation_address, connection_status, consumer_id, req.params.id],
-    (err) => {
+    async (err) => {
       if (err) return sendError(res, "Failed to update connection", err);
+      await logAudit({ req, action: "UPDATE", entity: "Service_Connection", entityId: req.params.id, department, payload: req.body });
       res.send("Connection Updated");
     }
   );
 });
 
 app.delete("/connections/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -578,8 +1068,9 @@ app.delete("/connections/:id", async (req, res) => {
     return res.status(403).json({ message: "Access denied for this connection" });
   }
 
-  db.query("DELETE FROM Service_Connection WHERE connection_id=?", [req.params.id], (err) => {
+  db.query("DELETE FROM Service_Connection WHERE connection_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete connection", error: err.message });
+    await logAudit({ req, action: "DELETE", entity: "Service_Connection", entityId: req.params.id, department });
     res.send("Connection Deleted");
   });
 });
@@ -625,6 +1116,10 @@ app.get("/meters", (req, res) => {
 });
 
 app.post("/meters", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -645,7 +1140,7 @@ app.post("/meters", async (req, res) => {
       db.query(
         "INSERT INTO Meter (meter_id, meter_number, installation_date, meter_status, connection_id) VALUES (?, ?, ?, ?, ?)",
         [meter_id, meter_number, installation_date, meter_status, connection_id],
-        (err) => {
+        async (err) => {
           if (err) {
             if (err.code === "ER_DUP_ENTRY") {
               return res.status(400).json({
@@ -657,6 +1152,7 @@ app.post("/meters", async (req, res) => {
             }
             return res.status(500).json({ message: "Failed to add meter", error: err.message });
           }
+          await logAudit({ req, action: "CREATE", entity: "Meter", entityId: meter_id, department, payload: req.body });
           res.status(201).json({ message: "Meter Added", meter_id });
         }
       );
@@ -665,6 +1161,10 @@ app.post("/meters", async (req, res) => {
 });
 
 app.put("/meters/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -687,7 +1187,7 @@ app.put("/meters/:id", async (req, res) => {
   db.query(
     "UPDATE Meter SET meter_number=?, installation_date=?, meter_status=?, connection_id=? WHERE meter_id=?",
     [meter_number, installation_date, meter_status, connection_id, req.params.id],
-    (err) => {
+    async (err) => {
       if (err) {
         if (err.code === "ER_DUP_ENTRY") {
           return res.status(400).json({
@@ -699,12 +1199,17 @@ app.put("/meters/:id", async (req, res) => {
         }
         return res.status(500).json({ message: "Failed to update meter", error: err.message });
       }
+      await logAudit({ req, action: "UPDATE", entity: "Meter", entityId: req.params.id, department, payload: req.body });
       res.send("Meter Updated");
     }
   );
 });
 
 app.delete("/meters/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -714,8 +1219,9 @@ app.delete("/meters/:id", async (req, res) => {
     return res.status(403).json({ message: "Access denied for this meter" });
   }
 
-  db.query("DELETE FROM Meter WHERE meter_id=?", [req.params.id], (err) => {
+  db.query("DELETE FROM Meter WHERE meter_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete meter", error: err.message });
+    await logAudit({ req, action: "DELETE", entity: "Meter", entityId: req.params.id, department });
     res.send("Meter Deleted");
   });
 });
@@ -768,6 +1274,10 @@ app.get("/records", async (req, res) => {
 });
 
 app.post("/records", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -805,12 +1315,17 @@ app.post("/records", async (req, res) => {
       reading_id,
       autoBill
     });
+    await logAudit({ req, action: "CREATE", entity: "Reading_Record", entityId: reading_id, department, payload: req.body });
   } catch (error) {
     res.status(500).json({ message: "Failed to add record", error: error.message });
   }
 });
 
 app.put("/records/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -836,6 +1351,7 @@ app.put("/records/:id", async (req, res) => {
       `UPDATE ${readingTable} SET current_reading=?, consumption_units=?, reading_date=?, meter_id=? WHERE reading_id=?`,
       [current_reading, consumption_units, reading_date, meter_id, req.params.id]
     );
+    await logAudit({ req, action: "UPDATE", entity: "Reading_Record", entityId: req.params.id, department, payload: req.body });
     res.send("Record Updated");
   } catch (error) {
     return sendError(res, "Failed to update record", error);
@@ -843,6 +1359,10 @@ app.put("/records/:id", async (req, res) => {
 });
 
 app.delete("/records/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -855,6 +1375,7 @@ app.delete("/records/:id", async (req, res) => {
 
     const readingTable = await getReadingTableName();
     await dbQuery(`DELETE FROM ${readingTable} WHERE reading_id=?`, [req.params.id]);
+    await logAudit({ req, action: "DELETE", entity: "Reading_Record", entityId: req.params.id, department });
     res.send("Record Deleted");
   } catch (error) {
     return sendError(res, "Failed to delete record", error);
@@ -931,6 +1452,10 @@ app.get("/bills/:id", (req, res) => {
 });
 
 app.post("/bills", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -951,8 +1476,9 @@ app.post("/bills", async (req, res) => {
       db.query(
         "INSERT INTO Bill (bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id],
-        (err) => {
+        async (err) => {
           if (err) return res.status(500).json({ message: "Failed to add bill", error: err.message });
+          await logAudit({ req, action: "CREATE", entity: "Bill", entityId: bill_id, department, payload: req.body });
           res.status(201).json({ message: "Bill Added", bill_id });
         }
       );
@@ -1027,6 +1553,10 @@ app.post("/bills/generate", async (req, res) => {
 });
 
 app.put("/bills/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1049,14 +1579,19 @@ app.put("/bills/:id", async (req, res) => {
   db.query(
     "UPDATE Bill SET bill_number=?, billing_period=?, total_amount=?, due_date=?, payment_status=?, connection_id=?, reading_id=? WHERE bill_id=?",
     [bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id, req.params.id],
-    (err) => {
+    async (err) => {
       if (err) return res.send(err);
+      await logAudit({ req, action: "UPDATE", entity: "Bill", entityId: req.params.id, department, payload: req.body });
       res.send("Bill Updated");
     }
   );
 });
 
 app.delete("/bills/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1066,8 +1601,9 @@ app.delete("/bills/:id", async (req, res) => {
     return res.status(403).json({ message: "Access denied for this bill" });
   }
 
-  db.query("DELETE FROM Bill WHERE bill_id=?", [req.params.id], (err) => {
+  db.query("DELETE FROM Bill WHERE bill_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete bill", error: err.message });
+    await logAudit({ req, action: "DELETE", entity: "Bill", entityId: req.params.id, department });
     res.send("Bill Deleted");
   });
 });
@@ -1118,6 +1654,10 @@ app.get("/payments/:id", (req, res) => {
 });
 
 app.post("/payments", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1136,6 +1676,7 @@ app.post("/payments", async (req, res) => {
       [payment_id, payment_date, amount_paid, payment_mode, bill_id]
     );
     await syncBillStatus(bill_id);
+    await logAudit({ req, action: "CREATE", entity: "Payment", entityId: payment_id, department, payload: req.body });
     res.status(201).json({ payment_id, message: "Payment Added" });
   } catch (error) {
     res.status(500).json({ message: "Failed to add payment", error: error.message });
@@ -1143,6 +1684,10 @@ app.post("/payments", async (req, res) => {
 });
 
 app.put("/payments/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1173,6 +1718,8 @@ app.put("/payments/:id", async (req, res) => {
       await syncBillStatus(bill_id);
     }
 
+    await logAudit({ req, action: "UPDATE", entity: "Payment", entityId: req.params.id, department, payload: req.body });
+
     res.json({ message: "Payment Updated" });
   } catch (error) {
     res.status(500).json({ message: "Failed to update payment", error: error.message });
@@ -1180,6 +1727,10 @@ app.put("/payments/:id", async (req, res) => {
 });
 
 app.delete("/payments/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1197,6 +1748,7 @@ app.delete("/payments/:id", async (req, res) => {
 
     await dbQuery("DELETE FROM Payment WHERE payment_id=?", [req.params.id]);
     await syncBillStatus(existing[0].bill_id);
+    await logAudit({ req, action: "DELETE", entity: "Payment", entityId: req.params.id, department });
     res.json({ message: "Payment Deleted" });
   } catch (error) {
     res.status(500).json({ message: "Failed to delete payment", error: error.message });
@@ -1264,6 +1816,10 @@ app.get("/tariffs/:id", (req, res) => {
 });
 
 app.post("/tariffs", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1298,6 +1854,7 @@ app.post("/tariffs", async (req, res) => {
         effective_from || null
       ]
     );
+    await logAudit({ req, action: "CREATE", entity: "Tariff_Plan", entityId: tariff_id, department, payload: req.body });
     res.status(201).json({ message: "Tariff Added", tariff_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add tariff", error: error.message });
@@ -1305,6 +1862,10 @@ app.post("/tariffs", async (req, res) => {
 });
 
 app.put("/tariffs/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1338,6 +1899,7 @@ app.put("/tariffs/:id", async (req, res) => {
         req.params.id
       ]
     );
+    await logAudit({ req, action: "UPDATE", entity: "Tariff_Plan", entityId: req.params.id, department, payload: req.body });
     res.json({ message: "Tariff Updated" });
   } catch (error) {
     res.status(500).json({ message: "Failed to update tariff", error: error.message });
@@ -1345,6 +1907,10 @@ app.put("/tariffs/:id", async (req, res) => {
 });
 
 app.delete("/tariffs/:id", (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
   const department = requireDepartment(req, res);
   if (!department) {
     return;
@@ -1355,8 +1921,9 @@ app.delete("/tariffs/:id", (req, res) => {
       if (!allowed) {
         return res.status(403).json({ message: "Access denied for this tariff" });
       }
-      db.query("DELETE FROM Tariff_Plan WHERE tariff_id=?", [req.params.id], (err) => {
+      db.query("DELETE FROM Tariff_Plan WHERE tariff_id=?", [req.params.id], async (err) => {
         if (err) return res.status(500).json({ message: "Failed to delete tariff", error: err.message });
+        await logAudit({ req, action: "DELETE", entity: "Tariff_Plan", entityId: req.params.id, department });
         res.send("Tariff Deleted");
       });
     })
@@ -1532,6 +2099,13 @@ app.delete("/tariffs/:id", (req, res) => {
 
 //////////////////////////////////////////////////////
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+ensureSystemTables()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to initialize system tables:", error.message);
+    process.exit(1);
+  });

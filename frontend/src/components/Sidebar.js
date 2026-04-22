@@ -4,12 +4,16 @@ function Sidebar() {
   const navItems = [
     { to: "/", label: "Dashboard" },
     { to: "/consumers", label: "Consumers" },
+    { to: "/consumer-search", label: "Consumer Search" },
     { to: "/connections", label: "Connections" },
     { to: "/meters", label: "Meters" },
     { to: "/records", label: "Reading Records" },
     { to: "/tariffs", label: "Tariff Plans" },
     { to: "/bills", label: "Bills" },
-    { to: "/payments", label: "Payments" }
+    { to: "/payments", label: "Payments" },
+    { to: "/alerts", label: "Alerts" },
+    { to: "/reports", label: "Reports" },
+    { to: "/audit-logs", label: "Audit Logs" }
   ];
 
   return (
