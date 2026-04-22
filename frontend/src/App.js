@@ -39,13 +39,11 @@ function App() {
   useEffect(() => {
     if (currentUser?.department) {
       axios.defaults.headers.common["x-department"] = currentUser.department;
-      axios.defaults.headers.common["x-role"] = currentUser.role || "Operator";
       axios.defaults.headers.common["x-user-name"] = currentUser.name || "Unknown";
       axios.defaults.headers.common["x-user-email"] = currentUser.email || "unknown@example.com";
       return;
     }
     delete axios.defaults.headers.common["x-department"];
-    delete axios.defaults.headers.common["x-role"];
     delete axios.defaults.headers.common["x-user-name"];
     delete axios.defaults.headers.common["x-user-email"];
   }, [currentUser]);
@@ -63,7 +61,7 @@ function App() {
                 <p>Manage consumers, usage, billing, and payments in one unified dashboard.</p>
               </div>
               <div className="topbar-actions">
-                <span>{currentUser.name} | {currentUser.department} | {currentUser.role || "Operator"}</span>
+                <span>{currentUser.name} | {currentUser.department} | Employee</span>
                 <button onClick={handleLogout}>Logout</button>
               </div>
             </header>

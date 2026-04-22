@@ -93,7 +93,6 @@ const normalizeSqlDate = (value) => {
 };
 
 const ALLOWED_DEPARTMENTS = ["Electricity", "Gas", "Water"];
-const ALLOWED_ROLES = ["Admin", "Operator", "Viewer"];
 
 const normalizeDepartment = (value) => {
   if (!value) {
@@ -105,18 +104,7 @@ const normalizeDepartment = (value) => {
   return match || null;
 };
 
-const normalizeRole = (value) => {
-  if (!value) {
-    return "Operator";
-  }
-
-  const raw = String(value).trim().toLowerCase();
-  const match = ALLOWED_ROLES.find((role) => role.toLowerCase() === raw);
-  return match || "Operator";
-};
-
 const getDepartmentFromRequest = (req) => normalizeDepartment(req.headers["x-department"]);
-const getRoleFromRequest = (req) => normalizeRole(req.headers["x-role"]);
 
 const requireDepartment = (req, res) => {
   const department = getDepartmentFromRequest(req);
@@ -127,12 +115,7 @@ const requireDepartment = (req, res) => {
   return department;
 };
 
-const ensureWriteAccess = (req, res) => {
-  const role = getRoleFromRequest(req);
-  if (role === "Viewer") {
-    res.status(403).json({ message: "Viewer role has read-only access" });
-    return false;
-  }
+const ensureWriteAccess = () => {
   return true;
 };
 
