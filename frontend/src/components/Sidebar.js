@@ -12,8 +12,7 @@ function Sidebar() {
     { to: "/bills", label: "Bills" },
     { to: "/payments", label: "Payments" },
     { to: "/alerts", label: "Alerts" },
-    { to: "/reports", label: "Reports" },
-    { to: "/audit-logs", label: "Audit Logs" }
+    { to: "/reports", label: "Reports" }
   ];
 
   return (

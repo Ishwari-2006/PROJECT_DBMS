@@ -118,12 +118,6 @@ const normalizeRole = (value) => {
 const getDepartmentFromRequest = (req) => normalizeDepartment(req.headers["x-department"]);
 const getRoleFromRequest = (req) => normalizeRole(req.headers["x-role"]);
 
-const getActorFromRequest = (req) => ({
-  role: getRoleFromRequest(req),
-  name: req.headers["x-user-name"] ? String(req.headers["x-user-name"]) : "Unknown",
-  email: req.headers["x-user-email"] ? String(req.headers["x-user-email"]) : "unknown@example.com"
-});
-
 const requireDepartment = (req, res) => {
   const department = getDepartmentFromRequest(req);
   if (!department) {
@@ -142,55 +136,6 @@ const ensureWriteAccess = (req, res) => {
   return true;
 };
 
-const ensureAdminAccess = (req, res) => {
-  const role = getRoleFromRequest(req);
-  if (role !== "Admin") {
-    res.status(403).json({ message: "Admin access required" });
-    return false;
-  }
-  return true;
-};
-
-const ensureSystemTables = async () => {
-  await dbQuery(
-    `CREATE TABLE IF NOT EXISTS Audit_Log (
-      audit_id INT NOT NULL AUTO_INCREMENT,
-      action_type VARCHAR(20) NOT NULL,
-      entity_name VARCHAR(50) NOT NULL,
-      entity_id VARCHAR(50) DEFAULT NULL,
-      department VARCHAR(50) DEFAULT NULL,
-      actor_role VARCHAR(20) DEFAULT NULL,
-      actor_name VARCHAR(100) DEFAULT NULL,
-      actor_email VARCHAR(120) DEFAULT NULL,
-      payload_json TEXT,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (audit_id)
-    )`
-  );
-};
-
-const logAudit = async ({ req, action, entity, entityId, department, payload }) => {
-  try {
-    const actor = getActorFromRequest(req);
-    await dbQuery(
-      `INSERT INTO Audit_Log
-        (action_type, entity_name, entity_id, department, actor_role, actor_name, actor_email, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        action,
-        entity,
-        entityId ? String(entityId) : null,
-        department || null,
-        actor.role,
-        actor.name,
-        actor.email,
-        payload ? JSON.stringify(payload) : null
-      ]
-    );
-  } catch (error) {
-    console.error("Audit log failed:", error.message);
-  }
-};
 
 const hasConnectionAccess = async (connectionId, department) => {
   const rows = await dbQuery(
@@ -765,26 +710,6 @@ app.get("/reports/department-summary/export.csv", async (req, res) => {
   }
 });
 
-app.get("/audit-logs", async (req, res) => {
-  if (!ensureAdminAccess(req, res)) {
-    return;
-  }
-
-  try {
-    const limit = Number(req.query.limit || 100);
-    const rows = await dbQuery(
-      `SELECT *
-       FROM Audit_Log
-       ORDER BY audit_id DESC
-       LIMIT ?`,
-      [Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 100]
-    );
-    res.json(rows);
-  } catch (error) {
-    return sendError(res, "Failed to fetch audit logs", error);
-  }
-});
-
 app.get("/dashboard/summary", async (req, res) => {
   const department = requireDepartment(req, res);
   if (!department) {
@@ -887,7 +812,6 @@ app.post("/consumers", async (req, res) => {
       "INSERT INTO Consumer (consumer_id, name, address, contact_no, consumer_type, registration_date) VALUES (?, ?, ?, ?, ?, ?)",
       [consumer_id, name, address, contact_no, consumer_type, normalizedRegistrationDate]
     );
-    await logAudit({ req, action: "CREATE", entity: "Consumer", entityId: consumer_id, department, payload: req.body });
     res.status(201).json({ message: "Consumer Added", consumer_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add consumer", error: error.message });
@@ -920,7 +844,6 @@ app.put("/consumers/:id", async (req, res) => {
     [name, address, contact_no, consumer_type, normalizedRegistrationDate, req.params.id],
     async (err) => {
       if (err) return sendError(res, "Failed to update consumer", err);
-      await logAudit({ req, action: "UPDATE", entity: "Consumer", entityId: req.params.id, department, payload: req.body });
       res.send("Consumer Updated");
     }
   );
@@ -942,7 +865,6 @@ app.delete("/consumers/:id", async (req, res) => {
 
   db.query("DELETE FROM Consumer WHERE consumer_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete consumer", error: err.message });
-    await logAudit({ req, action: "DELETE", entity: "Consumer", entityId: req.params.id, department });
     res.send("Consumer Deleted");
   });
 });
@@ -1016,7 +938,6 @@ app.post("/connections", async (req, res) => {
       "INSERT INTO Service_Connection (connection_id, service_type, installation_address, connection_status, consumer_id) VALUES (?, ?, ?, ?, ?)",
       [connection_id, department, installation_address, connection_status, consumer_id]
     );
-    await logAudit({ req, action: "CREATE", entity: "Service_Connection", entityId: connection_id, department, payload: req.body });
     res.status(201).json({ message: "Connection Added", connection_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add connection", error: error.message });
@@ -1048,7 +969,6 @@ app.put("/connections/:id", async (req, res) => {
     [department, installation_address, connection_status, consumer_id, req.params.id],
     async (err) => {
       if (err) return sendError(res, "Failed to update connection", err);
-      await logAudit({ req, action: "UPDATE", entity: "Service_Connection", entityId: req.params.id, department, payload: req.body });
       res.send("Connection Updated");
     }
   );
@@ -1070,7 +990,6 @@ app.delete("/connections/:id", async (req, res) => {
 
   db.query("DELETE FROM Service_Connection WHERE connection_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete connection", error: err.message });
-    await logAudit({ req, action: "DELETE", entity: "Service_Connection", entityId: req.params.id, department });
     res.send("Connection Deleted");
   });
 });
@@ -1152,7 +1071,6 @@ app.post("/meters", async (req, res) => {
             }
             return res.status(500).json({ message: "Failed to add meter", error: err.message });
           }
-          await logAudit({ req, action: "CREATE", entity: "Meter", entityId: meter_id, department, payload: req.body });
           res.status(201).json({ message: "Meter Added", meter_id });
         }
       );
@@ -1199,7 +1117,6 @@ app.put("/meters/:id", async (req, res) => {
         }
         return res.status(500).json({ message: "Failed to update meter", error: err.message });
       }
-      await logAudit({ req, action: "UPDATE", entity: "Meter", entityId: req.params.id, department, payload: req.body });
       res.send("Meter Updated");
     }
   );
@@ -1221,7 +1138,6 @@ app.delete("/meters/:id", async (req, res) => {
 
   db.query("DELETE FROM Meter WHERE meter_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete meter", error: err.message });
-    await logAudit({ req, action: "DELETE", entity: "Meter", entityId: req.params.id, department });
     res.send("Meter Deleted");
   });
 });
@@ -1315,7 +1231,6 @@ app.post("/records", async (req, res) => {
       reading_id,
       autoBill
     });
-    await logAudit({ req, action: "CREATE", entity: "Reading_Record", entityId: reading_id, department, payload: req.body });
   } catch (error) {
     res.status(500).json({ message: "Failed to add record", error: error.message });
   }
@@ -1351,7 +1266,6 @@ app.put("/records/:id", async (req, res) => {
       `UPDATE ${readingTable} SET current_reading=?, consumption_units=?, reading_date=?, meter_id=? WHERE reading_id=?`,
       [current_reading, consumption_units, reading_date, meter_id, req.params.id]
     );
-    await logAudit({ req, action: "UPDATE", entity: "Reading_Record", entityId: req.params.id, department, payload: req.body });
     res.send("Record Updated");
   } catch (error) {
     return sendError(res, "Failed to update record", error);
@@ -1375,7 +1289,6 @@ app.delete("/records/:id", async (req, res) => {
 
     const readingTable = await getReadingTableName();
     await dbQuery(`DELETE FROM ${readingTable} WHERE reading_id=?`, [req.params.id]);
-    await logAudit({ req, action: "DELETE", entity: "Reading_Record", entityId: req.params.id, department });
     res.send("Record Deleted");
   } catch (error) {
     return sendError(res, "Failed to delete record", error);
@@ -1478,7 +1391,6 @@ app.post("/bills", async (req, res) => {
         [bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id],
         async (err) => {
           if (err) return res.status(500).json({ message: "Failed to add bill", error: err.message });
-          await logAudit({ req, action: "CREATE", entity: "Bill", entityId: bill_id, department, payload: req.body });
           res.status(201).json({ message: "Bill Added", bill_id });
         }
       );
@@ -1581,7 +1493,6 @@ app.put("/bills/:id", async (req, res) => {
     [bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id, req.params.id],
     async (err) => {
       if (err) return res.send(err);
-      await logAudit({ req, action: "UPDATE", entity: "Bill", entityId: req.params.id, department, payload: req.body });
       res.send("Bill Updated");
     }
   );
@@ -1603,7 +1514,6 @@ app.delete("/bills/:id", async (req, res) => {
 
   db.query("DELETE FROM Bill WHERE bill_id=?", [req.params.id], async (err) => {
     if (err) return res.status(500).json({ message: "Failed to delete bill", error: err.message });
-    await logAudit({ req, action: "DELETE", entity: "Bill", entityId: req.params.id, department });
     res.send("Bill Deleted");
   });
 });
@@ -1676,7 +1586,6 @@ app.post("/payments", async (req, res) => {
       [payment_id, payment_date, amount_paid, payment_mode, bill_id]
     );
     await syncBillStatus(bill_id);
-    await logAudit({ req, action: "CREATE", entity: "Payment", entityId: payment_id, department, payload: req.body });
     res.status(201).json({ payment_id, message: "Payment Added" });
   } catch (error) {
     res.status(500).json({ message: "Failed to add payment", error: error.message });
@@ -1718,8 +1627,6 @@ app.put("/payments/:id", async (req, res) => {
       await syncBillStatus(bill_id);
     }
 
-    await logAudit({ req, action: "UPDATE", entity: "Payment", entityId: req.params.id, department, payload: req.body });
-
     res.json({ message: "Payment Updated" });
   } catch (error) {
     res.status(500).json({ message: "Failed to update payment", error: error.message });
@@ -1748,7 +1655,6 @@ app.delete("/payments/:id", async (req, res) => {
 
     await dbQuery("DELETE FROM Payment WHERE payment_id=?", [req.params.id]);
     await syncBillStatus(existing[0].bill_id);
-    await logAudit({ req, action: "DELETE", entity: "Payment", entityId: req.params.id, department });
     res.json({ message: "Payment Deleted" });
   } catch (error) {
     res.status(500).json({ message: "Failed to delete payment", error: error.message });
@@ -1854,7 +1760,6 @@ app.post("/tariffs", async (req, res) => {
         effective_from || null
       ]
     );
-    await logAudit({ req, action: "CREATE", entity: "Tariff_Plan", entityId: tariff_id, department, payload: req.body });
     res.status(201).json({ message: "Tariff Added", tariff_id });
   } catch (error) {
     res.status(500).json({ message: "Failed to add tariff", error: error.message });
@@ -1899,7 +1804,6 @@ app.put("/tariffs/:id", async (req, res) => {
         req.params.id
       ]
     );
-    await logAudit({ req, action: "UPDATE", entity: "Tariff_Plan", entityId: req.params.id, department, payload: req.body });
     res.json({ message: "Tariff Updated" });
   } catch (error) {
     res.status(500).json({ message: "Failed to update tariff", error: error.message });
@@ -1923,7 +1827,6 @@ app.delete("/tariffs/:id", (req, res) => {
       }
       db.query("DELETE FROM Tariff_Plan WHERE tariff_id=?", [req.params.id], async (err) => {
         if (err) return res.status(500).json({ message: "Failed to delete tariff", error: err.message });
-        await logAudit({ req, action: "DELETE", entity: "Tariff_Plan", entityId: req.params.id, department });
         res.send("Tariff Deleted");
       });
     })
@@ -2099,13 +2002,6 @@ app.delete("/tariffs/:id", (req, res) => {
 
 //////////////////////////////////////////////////////
 
-ensureSystemTables()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch((error) => {
-    console.error("Failed to initialize system tables:", error.message);
-    process.exit(1);
-  });
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});

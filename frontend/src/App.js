@@ -16,7 +16,6 @@ import HomePage from "./pages/HomePage";
 import ConsumerSearch from "./pages/ConsumerSearch";
 import AlertsPage from "./pages/AlertsPage";
 import ReportsPage from "./pages/ReportsPage";
-import AuditLogsPage from "./pages/AuditLogsPage";
 
 function App() {
   const [currentUser, setCurrentUser] = useState(() => {
@@ -81,7 +80,6 @@ function App() {
                 <Route path="/payments" element={<Payments department={currentUser.department} />} />
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
-                <Route path="/audit-logs" element={<AuditLogsPage currentUser={currentUser} />} />
 
                 <Route path="/tariffs" element={<TariffPlans department={currentUser.department} />} />
                 <Route path="/connection-tariffs" element={<ConnectionTariffs department={currentUser.department} />} />
