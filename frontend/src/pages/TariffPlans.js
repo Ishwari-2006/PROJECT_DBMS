@@ -21,7 +21,12 @@ function TariffPlans({ department }) {
 
   const fetchData = useCallback(() => {
     axios.get("http://127.0.0.1:5000/tariffs")
-      .then(res => setData(res.data.filter((t) => t.service_type === department)))
+      .then((res) => {
+        const sortedTariffs = res.data
+          .filter((t) => t.service_type === department)
+          .sort((a, b) => Number(a.tariff_id) - Number(b.tariff_id));
+        setData(sortedTariffs);
+      })
       .catch(() => setData([]));
   }, [department]);
 

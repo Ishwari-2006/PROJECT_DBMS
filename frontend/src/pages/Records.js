@@ -39,9 +39,9 @@ function Records({ department }) {
         );
         const meterIds = new Set(filteredMeters.map((m) => Number(m.meter_id)));
 
-        const filteredRecords = recordsRes.data.filter((r) =>
-          meterIds.has(Number(r.meter_id))
-        );
+        const filteredRecords = recordsRes.data
+          .filter((r) => meterIds.has(Number(r.meter_id)))
+          .sort((a, b) => Number(a.reading_id) - Number(b.reading_id));
 
         setMeters(filteredMeters);
         setData(filteredRecords);
@@ -81,10 +81,18 @@ function Records({ department }) {
         );
         console.log("Updated");
       } else {
-        await axios.post(
+        const response = await axios.post(
           "http://127.0.0.1:5000/records",
           form
         );
+        const apiMessage = response?.data?.message;
+        const autoBill = response?.data?.autoBill;
+        if (apiMessage) {
+          const reasonSuffix = autoBill && !autoBill.created && autoBill.reason
+            ? ` (${autoBill.reason})`
+            : "";
+          alert(`${apiMessage}${reasonSuffix}`);
+        }
         console.log("Added");
       }
 

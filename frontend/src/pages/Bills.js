@@ -44,13 +44,13 @@ function Bills({ department }) {
             .map((m) => Number(m.meter_id))
         );
 
-        const filteredRecords = recordsRes.data.filter((r) =>
-          meterIds.has(Number(r.meter_id))
-        );
+        const filteredRecords = recordsRes.data
+          .filter((r) => meterIds.has(Number(r.meter_id)))
+          .sort((a, b) => Number(a.reading_id) - Number(b.reading_id));
 
-        const filteredBills = billsRes.data.filter((b) =>
-          connectionIds.has(Number(b.connection_id))
-        );
+        const filteredBills = billsRes.data
+          .filter((b) => connectionIds.has(Number(b.connection_id)))
+          .sort((a, b) => Number(a.bill_id) - Number(b.bill_id));
 
         setConnections(filteredConnections);
         setRecords(filteredRecords);

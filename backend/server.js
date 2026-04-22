@@ -128,7 +128,9 @@ const hasConsumerAccess = async (consumerId, department) => {
     `SELECT DISTINCT c.consumer_id
      FROM Consumer c
      JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
-     WHERE c.consumer_id = ? AND sc.service_type = ?`,
+     WHERE c.consumer_id = ?
+       AND sc.service_type = ?
+       AND sc.connection_status = 'Active'`,
     [consumerId, department]
   );
   return rows.length > 0;
@@ -212,6 +214,109 @@ const syncBillStatus = async (billId) => {
   await dbQuery("UPDATE Bill SET payment_status = ? WHERE bill_id = ?", [status, billId]);
 };
 
+const toSqlDate = (date) => {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const toBillingPeriod = (date) => {
+  const month = date.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return `${month}-${date.getUTCFullYear()}`;
+};
+
+const getServiceCode = (serviceType) => {
+  const map = {
+    Electricity: "ELE",
+    Gas: "GAS",
+    Water: "WTR"
+  };
+  return map[serviceType] || "GEN";
+};
+
+const createAutoBillForReading = async ({ reading_id, meter_id, reading_date, consumption_units, department }) => {
+  const existingBill = await dbQuery("SELECT bill_id FROM Bill WHERE reading_id = ? LIMIT 1", [reading_id]);
+  if (existingBill.length) {
+    return { created: false, reason: "Bill already exists", bill_id: existingBill[0].bill_id };
+  }
+
+  const connectionRows = await dbQuery(
+    `SELECT sc.connection_id, sc.service_type, c.consumer_type
+     FROM Meter m
+     JOIN Service_Connection sc ON sc.connection_id = m.connection_id
+     JOIN Consumer c ON c.consumer_id = sc.consumer_id
+     WHERE m.meter_id = ? AND sc.service_type = ?
+     LIMIT 1`,
+    [meter_id, department]
+  );
+
+  if (!connectionRows.length) {
+    return { created: false, reason: "No connection found for reading" };
+  }
+
+  const connection_id = Number(connectionRows[0].connection_id);
+  const service_type = connectionRows[0].service_type;
+  const consumer_type = connectionRows[0].consumer_type || "Residential";
+
+  let tariffRows = await dbQuery(
+    `SELECT tp.rate_per_unit, tp.fixed_charge, tp.tax_percentage
+     FROM Connection_Tariff ct
+     JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+     WHERE ct.connection_id = ?
+     ORDER BY ct.start_date DESC
+     LIMIT 1`,
+    [connection_id]
+  );
+
+  if (!tariffRows.length) {
+    tariffRows = await dbQuery(
+      `SELECT tp.rate_per_unit, tp.fixed_charge, tp.tax_percentage
+       FROM Tariff_Plan tp
+       WHERE tp.service_type = ? AND tp.consumer_type = ?
+       ORDER BY tp.effective_from DESC, tp.tariff_id DESC
+       LIMIT 1`,
+      [service_type, consumer_type]
+    );
+  }
+
+  if (!tariffRows.length) {
+    return { created: false, reason: "No tariff plan found for this service/consumer type" };
+  }
+
+  const ratePerUnit = Number(tariffRows[0].rate_per_unit || 0);
+  const fixedCharge = Number(tariffRows[0].fixed_charge || 0);
+  const taxPercentage = Number(tariffRows[0].tax_percentage || 0);
+  const units = Number(consumption_units || 0);
+  const subtotal = units * ratePerUnit + fixedCharge;
+  const totalAmount = Number((subtotal + (subtotal * taxPercentage) / 100).toFixed(2));
+
+  const sourceDate = reading_date ? new Date(`${reading_date}T00:00:00Z`) : new Date();
+  const dueDate = new Date(sourceDate);
+  dueDate.setUTCDate(dueDate.getUTCDate() + 15);
+
+  const bill_id = await nextId("Bill", "bill_id");
+  const yyyymm = `${sourceDate.getUTCFullYear()}${String(sourceDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const serviceCode = getServiceCode(service_type);
+  const bill_number = `BILL-${serviceCode}-${yyyymm}-${String(bill_id).padStart(4, "0")}`;
+
+  await dbQuery(
+    `INSERT INTO Bill (bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id)
+     VALUES (?, ?, ?, ?, ?, 'Unpaid', ?, ?)`,
+    [
+      bill_id,
+      bill_number,
+      toBillingPeriod(sourceDate),
+      totalAmount,
+      toSqlDate(dueDate),
+      connection_id,
+      reading_id
+    ]
+  );
+
+  return { created: true, bill_id };
+};
+
 app.get("/", (req, res) => {
   res.send("Backend working");
 });
@@ -230,7 +335,8 @@ app.get("/dashboard/summary", async (req, res) => {
       dbQuery(
         `SELECT COUNT(DISTINCT sc.consumer_id) AS count
          FROM Service_Connection sc
-         WHERE sc.service_type = ?`,
+         WHERE sc.service_type = ?
+           AND sc.connection_status = 'Active'`,
         [department]
       ),
       dbQuery(
@@ -287,7 +393,8 @@ app.get("/consumers", (req, res) => {
     `SELECT DISTINCT c.*
      FROM Consumer c
      JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
-     WHERE sc.service_type = ?`,
+     WHERE sc.service_type = ?
+       AND sc.connection_status = 'Active'`,
     [department],
     (err, result) => {
       if (err) return sendError(res, "Failed to fetch consumers", err);
@@ -374,7 +481,9 @@ app.get("/consumers/:id", (req, res) => {
     `SELECT DISTINCT c.*
      FROM Consumer c
      JOIN Service_Connection sc ON sc.consumer_id = c.consumer_id
-     WHERE c.consumer_id=? AND sc.service_type = ?`,
+     WHERE c.consumer_id=?
+       AND sc.service_type = ?
+       AND sc.connection_status = 'Active'`,
     [req.params.id, department],
     (err, result) => {
     if (err) return sendError(res, "Failed to fetch consumer", err);
@@ -394,10 +503,19 @@ app.get("/connections", (req, res) => {
     return;
   }
 
-  db.query("SELECT * FROM Service_Connection WHERE service_type = ?", [department], (err, result) => {
-    if (err) return sendError(res, "Failed to fetch connections", err);
-    res.json(result);
-  });
+  db.query(
+    `SELECT *
+     FROM Service_Connection
+     WHERE service_type = ?
+     ORDER BY
+       CASE WHEN connection_status = 'Disconnected' THEN 1 ELSE 0 END,
+       connection_id ASC`,
+    [department],
+    (err, result) => {
+      if (err) return sendError(res, "Failed to fetch connections", err);
+      res.json(result);
+    }
+  );
 });
 
 app.post("/connections", async (req, res) => {
@@ -639,7 +757,8 @@ app.get("/records", async (req, res) => {
        FROM ${readingTable} r
        JOIN Meter m ON m.meter_id = r.meter_id
        JOIN Service_Connection sc ON sc.connection_id = m.connection_id
-       WHERE sc.service_type = ?`,
+       WHERE sc.service_type = ?
+       ORDER BY r.reading_id ASC`,
       [department]
     );
     res.json(result);
@@ -673,7 +792,19 @@ app.post("/records", async (req, res) => {
       [reading_id, current_reading, consumption_units, reading_date, meter_id]
     );
 
-    res.status(201).json({ message: "Record Added", reading_id });
+    const autoBill = await createAutoBillForReading({
+      reading_id,
+      meter_id,
+      reading_date,
+      consumption_units,
+      department
+    });
+
+    res.status(201).json({
+      message: autoBill.created ? "Record Added and Bill Auto Generated" : "Record Added",
+      reading_id,
+      autoBill
+    });
   } catch (error) {
     res.status(500).json({ message: "Failed to add record", error: error.message });
   }
@@ -767,7 +898,8 @@ app.get("/bills", (req, res) => {
     `SELECT b.*
      FROM Bill b
      JOIN Service_Connection sc ON sc.connection_id = b.connection_id
-     WHERE sc.service_type = ?`,
+     WHERE sc.service_type = ?
+     ORDER BY b.bill_id ASC`,
     [department],
     (err, result) => {
     if (err) {
@@ -1094,7 +1226,7 @@ app.get("/tariffs", (req, res) => {
       effective_from
     FROM Tariff_Plan
     WHERE service_type = ?
-     ORDER BY tariff_id DESC`,
+    ORDER BY tariff_id ASC`,
       [department],
     (err, result) => {
     if (err) return sendError(res, "Failed to fetch tariffs", err);
@@ -1235,168 +1367,168 @@ app.delete("/tariffs/:id", (req, res) => {
 // ✅ CONNECTION TARIFF
 //////////////////////////////////////////////////////
 
-app.get("/connection-tariffs", (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
+// app.get("/connection-tariffs", (req, res) => {
+//   const department = requireDepartment(req, res);
+//   if (!department) {
+//     return;
+//   }
 
-  db.query(
-    `SELECT
-      ct.connection_tariff_id,
-      ct.connection_id,
-      ct.tariff_id,
-      ct.tariff_id AS plan_id,
-      ct.start_date,
-      ct.start_date AS effective_from,
-      ct.end_date,
-      CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
-     FROM Connection_Tariff ct
-    JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-     LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
-    WHERE sc.service_type = ?
-     ORDER BY ct.connection_tariff_id DESC`,
-      [department],
-    (err, result) => {
-    if (err) return sendError(res, "Failed to fetch connection tariffs", err);
-    res.json(result);
-    }
-  );
-});
+//   db.query(
+//     `SELECT
+//       ct.connection_tariff_id,
+//       ct.connection_id,
+//       ct.tariff_id,
+//       ct.tariff_id AS plan_id,
+//       ct.start_date,
+//       ct.start_date AS effective_from,
+//       ct.end_date,
+//       CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
+//      FROM Connection_Tariff ct
+//     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+//      LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+//     WHERE sc.service_type = ?
+//      ORDER BY ct.connection_tariff_id DESC`,
+//       [department],
+//     (err, result) => {
+//     if (err) return sendError(res, "Failed to fetch connection tariffs", err);
+//     res.json(result);
+//     }
+//   );
+// });
 
-app.get("/connection-tariffs/:id", (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
+// app.get("/connection-tariffs/:id", (req, res) => {
+//   const department = requireDepartment(req, res);
+//   if (!department) {
+//     return;
+//   }
 
-  db.query(
-    `SELECT
-      ct.connection_tariff_id,
-      ct.connection_id,
-      ct.tariff_id,
-      ct.tariff_id AS plan_id,
-      ct.start_date,
-      ct.start_date AS effective_from,
-      ct.end_date,
-      CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
-     FROM Connection_Tariff ct
-     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-     LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
-     WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
-    [req.params.id, department],
-    (err, result) => {
-      if (err) return sendError(res, "Failed to fetch connection tariff", err);
-      if (!result.length) return res.status(404).json({ message: "Connection tariff not found" });
-      res.json(result[0]);
-    }
-  );
-});
+//   db.query(
+//     `SELECT
+//       ct.connection_tariff_id,
+//       ct.connection_id,
+//       ct.tariff_id,
+//       ct.tariff_id AS plan_id,
+//       ct.start_date,
+//       ct.start_date AS effective_from,
+//       ct.end_date,
+//       CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
+//      FROM Connection_Tariff ct
+//      JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+//      LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+//      WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
+//     [req.params.id, department],
+//     (err, result) => {
+//       if (err) return sendError(res, "Failed to fetch connection tariff", err);
+//       if (!result.length) return res.status(404).json({ message: "Connection tariff not found" });
+//       res.json(result[0]);
+//     }
+//   );
+// });
 
-app.post("/connection-tariffs", async (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
+// app.post("/connection-tariffs", async (req, res) => {
+//   const department = requireDepartment(req, res);
+//   if (!department) {
+//     return;
+//   }
 
-  const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
+//   const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
 
-  try {
-    if (!(await hasConnectionAccess(connection_id, department))) {
-      return res.status(403).json({ message: "Access denied for selected connection" });
-    }
+//   try {
+//     if (!(await hasConnectionAccess(connection_id, department))) {
+//       return res.status(403).json({ message: "Access denied for selected connection" });
+//     }
 
-    const selectedTariffId = tariff_id || plan_id;
-    if (!(await hasTariffAccess(selectedTariffId, department))) {
-      return res.status(403).json({ message: "Access denied for selected tariff" });
-    }
+//     const selectedTariffId = tariff_id || plan_id;
+//     if (!(await hasTariffAccess(selectedTariffId, department))) {
+//       return res.status(403).json({ message: "Access denied for selected tariff" });
+//     }
 
-    const connection_tariff_id = await nextId("Connection_Tariff", "connection_tariff_id");
-    await dbQuery(
-      `INSERT INTO Connection_Tariff (connection_tariff_id, start_date, end_date, connection_id, tariff_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        connection_tariff_id,
-        start_date || effective_from || null,
-        end_date || null,
-        connection_id,
-        tariff_id || plan_id
-      ]
-    );
-    res.status(201).json({ message: "Connection Tariff Added", connection_tariff_id });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to add connection tariff", error: error.message });
-  }
-});
+//     const connection_tariff_id = await nextId("Connection_Tariff", "connection_tariff_id");
+//     await dbQuery(
+//       `INSERT INTO Connection_Tariff (connection_tariff_id, start_date, end_date, connection_id, tariff_id)
+//        VALUES (?, ?, ?, ?, ?)`,
+//       [
+//         connection_tariff_id,
+//         start_date || effective_from || null,
+//         end_date || null,
+//         connection_id,
+//         tariff_id || plan_id
+//       ]
+//     );
+//     res.status(201).json({ message: "Connection Tariff Added", connection_tariff_id });
+//   } catch (error) {
+//     res.status(500).json({ message: "Failed to add connection tariff", error: error.message });
+//   }
+// });
 
-app.put("/connection-tariffs/:id", async (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
+// app.put("/connection-tariffs/:id", async (req, res) => {
+//   const department = requireDepartment(req, res);
+//   if (!department) {
+//     return;
+//   }
 
-  const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
+//   const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
 
-  try {
-    const existing = await dbQuery(
-      `SELECT ct.connection_tariff_id
-       FROM Connection_Tariff ct
-       JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-       WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
-      [req.params.id, department]
-    );
-    if (!existing.length) {
-      return res.status(403).json({ message: "Access denied for this connection tariff" });
-    }
+//   try {
+//     const existing = await dbQuery(
+//       `SELECT ct.connection_tariff_id
+//        FROM Connection_Tariff ct
+//        JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+//        WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
+//       [req.params.id, department]
+//     );
+//     if (!existing.length) {
+//       return res.status(403).json({ message: "Access denied for this connection tariff" });
+//     }
 
-    if (!(await hasConnectionAccess(connection_id, department))) {
-      return res.status(403).json({ message: "Access denied for selected connection" });
-    }
+//     if (!(await hasConnectionAccess(connection_id, department))) {
+//       return res.status(403).json({ message: "Access denied for selected connection" });
+//     }
 
-    const selectedTariffId = tariff_id || plan_id;
-    if (!(await hasTariffAccess(selectedTariffId, department))) {
-      return res.status(403).json({ message: "Access denied for selected tariff" });
-    }
+//     const selectedTariffId = tariff_id || plan_id;
+//     if (!(await hasTariffAccess(selectedTariffId, department))) {
+//       return res.status(403).json({ message: "Access denied for selected tariff" });
+//     }
 
-    await dbQuery(
-      `UPDATE Connection_Tariff
-       SET connection_id=?, tariff_id=?, start_date=?, end_date=?
-       WHERE connection_tariff_id=?`,
-      [
-        connection_id,
-        tariff_id || plan_id,
-        start_date || effective_from || null,
-        end_date || null,
-        req.params.id
-      ]
-    );
-    res.json({ message: "Connection Tariff Updated" });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to update connection tariff", error: error.message });
-  }
-});
+//     await dbQuery(
+//       `UPDATE Connection_Tariff
+//        SET connection_id=?, tariff_id=?, start_date=?, end_date=?
+//        WHERE connection_tariff_id=?`,
+//       [
+//         connection_id,
+//         tariff_id || plan_id,
+//         start_date || effective_from || null,
+//         end_date || null,
+//         req.params.id
+//       ]
+//     );
+//     res.json({ message: "Connection Tariff Updated" });
+//   } catch (error) {
+//     res.status(500).json({ message: "Failed to update connection tariff", error: error.message });
+//   }
+// });
 
-app.delete("/connection-tariffs/:id", (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
+// app.delete("/connection-tariffs/:id", (req, res) => {
+//   const department = requireDepartment(req, res);
+//   if (!department) {
+//     return;
+//   }
 
-  db.query(
-    `DELETE ct
-     FROM Connection_Tariff ct
-     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-     WHERE ct.connection_tariff_id=? AND sc.service_type = ?`,
-    [req.params.id, department],
-    (err, result) => {
-      if (err) return res.status(500).json({ message: "Failed to delete connection tariff", error: err.message });
-      if (!result.affectedRows) {
-        return res.status(403).json({ message: "Access denied for this connection tariff" });
-      }
-      res.send("Connection Tariff Deleted");
-    }
-  );
-});
+//   db.query(
+//     `DELETE ct
+//      FROM Connection_Tariff ct
+//      JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+//      WHERE ct.connection_tariff_id=? AND sc.service_type = ?`,
+//     [req.params.id, department],
+//     (err, result) => {
+//       if (err) return res.status(500).json({ message: "Failed to delete connection tariff", error: err.message });
+//       if (!result.affectedRows) {
+//         return res.status(403).json({ message: "Access denied for this connection tariff" });
+//       }
+//       res.send("Connection Tariff Deleted");
+//     }
+//   );
+// });
 
 //////////////////////////////////////////////////////
 
