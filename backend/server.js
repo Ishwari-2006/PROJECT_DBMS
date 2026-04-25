@@ -25,6 +25,35 @@ const dbQuery = (sql, params = []) =>
     });
   });
 
+const beginTransaction = () =>
+  new Promise((resolve, reject) => {
+    db.beginTransaction((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+
+const commitTransaction = () =>
+  new Promise((resolve, reject) => {
+    db.commit((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+
+const rollbackTransaction = () =>
+  new Promise((resolve) => {
+    db.rollback(() => {
+      resolve();
+    });
+  });
+
 const nextId = async (tableName, idColumn) => {
   const rows = await dbQuery(
     `SELECT COALESCE(MAX(${idColumn}), 0) + 1 AS next_id FROM ${tableName}`
@@ -193,6 +222,20 @@ const hasTariffAccess = async (tariffId, department) => {
     "SELECT tariff_id FROM Tariff_Plan WHERE tariff_id = ? AND service_type = ?",
     [tariffId, department]
   );
+  return rows.length > 0;
+};
+
+const hasTariffTypeConflict = async ({ department, consumerType, excludeTariffId = null }) => {
+  const params = [department, consumerType];
+  let sql =
+    "SELECT tariff_id FROM Tariff_Plan WHERE service_type = ? AND consumer_type = ?";
+
+  if (excludeTariffId !== null && excludeTariffId !== undefined) {
+    sql += " AND tariff_id <> ?";
+    params.push(excludeTariffId);
+  }
+
+  const rows = await dbQuery(sql, params);
   return rows.length > 0;
 };
 
@@ -440,20 +483,30 @@ app.get("/consumers/:id/profile", async (req, res) => {
       ),
       dbQuery(
         `SELECT
+          sc.connection_id,
+          sc.connection_status,
           ct.connection_tariff_id,
-          ct.connection_id,
           ct.tariff_id,
           ct.start_date,
           ct.end_date,
           tp.consumer_type,
           tp.rate_per_unit,
           tp.fixed_charge,
-          tp.tax_percentage
-         FROM Connection_Tariff ct
-         JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-         JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+          tp.tax_percentage,
+          CASE
+            WHEN tp.tariff_id IS NULL THEN 'Not Assigned'
+            ELSE CONCAT(tp.service_type, ' - ', tp.consumer_type)
+          END AS plan_name
+         FROM Service_Connection sc
+         LEFT JOIN Connection_Tariff ct ON ct.connection_id = sc.connection_id
+           AND ct.connection_tariff_id = (
+             SELECT MAX(ct2.connection_tariff_id)
+             FROM Connection_Tariff ct2
+             WHERE ct2.connection_id = sc.connection_id
+           )
+         LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
          WHERE sc.consumer_id = ? AND sc.service_type = ?
-         ORDER BY ct.connection_tariff_id DESC`,
+         ORDER BY sc.connection_id ASC`,
         [req.params.id, department]
       )
     ]);
@@ -842,14 +895,67 @@ app.delete("/consumers/:id", async (req, res) => {
     return;
   }
 
-  if (!(await hasConsumerAccess(req.params.id, department))) {
+  const consumerConnections = await dbQuery(
+    "SELECT connection_id FROM Service_Connection WHERE consumer_id = ? AND service_type = ?",
+    [req.params.id, department]
+  );
+
+  if (!consumerConnections.length) {
     return res.status(403).json({ message: "Access denied for this consumer" });
   }
 
-  db.query("DELETE FROM Consumer WHERE consumer_id=?", [req.params.id], async (err) => {
-    if (err) return res.status(500).json({ message: "Failed to delete consumer", error: err.message });
+  const allConnectionRows = await dbQuery(
+    "SELECT connection_id FROM Service_Connection WHERE consumer_id = ?",
+    [req.params.id]
+  );
+  const connectionIds = allConnectionRows.map((row) => row.connection_id);
+
+  const meterRows = connectionIds.length
+    ? await dbQuery("SELECT meter_id FROM Meter WHERE connection_id IN (?)", [connectionIds])
+    : [];
+  const meterIds = meterRows.map((row) => row.meter_id);
+
+  const readingTable = await getReadingTableName();
+  const readingRows = meterIds.length
+    ? await dbQuery(`SELECT reading_id FROM ${readingTable} WHERE meter_id IN (?)`, [meterIds])
+    : [];
+  const readingIds = readingRows.map((row) => row.reading_id);
+
+  const billRows = connectionIds.length
+    ? await dbQuery("SELECT bill_id FROM Bill WHERE connection_id IN (?)", [connectionIds])
+    : [];
+  const billIds = billRows.map((row) => row.bill_id);
+
+  try {
+    await beginTransaction();
+
+    if (billIds.length) {
+      await dbQuery("DELETE FROM Payment WHERE bill_id IN (?)", [billIds]);
+      await dbQuery("DELETE FROM Bill WHERE bill_id IN (?)", [billIds]);
+    }
+
+    if (readingIds.length) {
+      await dbQuery(`DELETE FROM ${readingTable} WHERE reading_id IN (?)`, [readingIds]);
+    } else if (meterIds.length) {
+      await dbQuery(`DELETE FROM ${readingTable} WHERE meter_id IN (?)`, [meterIds]);
+    }
+
+    if (meterIds.length) {
+      await dbQuery("DELETE FROM Meter WHERE meter_id IN (?)", [meterIds]);
+    }
+
+    if (connectionIds.length) {
+      await dbQuery("DELETE FROM Connection_Tariff WHERE connection_id IN (?)", [connectionIds]);
+      await dbQuery("DELETE FROM Service_Connection WHERE consumer_id = ?", [req.params.id]);
+    }
+
+    await dbQuery("DELETE FROM Consumer WHERE consumer_id = ?", [req.params.id]);
+    await commitTransaction();
     res.send("Consumer Deleted");
-  });
+  } catch (err) {
+    await rollbackTransaction();
+    return res.status(500).json({ message: "Failed to delete consumer", error: err.message });
+  }
 });
 
 app.get("/consumers/:id", (req, res) => {
@@ -1728,6 +1834,10 @@ app.post("/tariffs", async (req, res) => {
       return res.status(403).json({ message: "Cannot create tariff for another department" });
     }
 
+    if (await hasTariffTypeConflict({ department, consumerType: consumer_type })) {
+      return res.status(409).json({ message: `A tariff already exists for ${consumer_type} in ${department}` });
+    }
+
     const tariff_id = await nextId("Tariff_Plan", "tariff_id");
     await dbQuery(
       `INSERT INTO Tariff_Plan
@@ -1773,6 +1883,15 @@ app.put("/tariffs/:id", async (req, res) => {
   } = req.body;
 
   try {
+    const normalizedConsumerType = consumer_type || (await dbQuery(
+      "SELECT consumer_type FROM Tariff_Plan WHERE tariff_id = ? AND service_type = ?",
+      [req.params.id, department]
+    ))[0]?.consumer_type;
+
+    if (normalizedConsumerType && await hasTariffTypeConflict({ department, consumerType: normalizedConsumerType, excludeTariffId: Number(req.params.id) })) {
+      return res.status(409).json({ message: `A tariff already exists for ${normalizedConsumerType} in ${department}` });
+    }
+
     await dbQuery(
       `UPDATE Tariff_Plan
        SET service_type=?, consumer_type=?, rate_per_unit=?, fixed_charge=?, tax_percentage=?, effective_from=?
@@ -1808,10 +1927,18 @@ app.delete("/tariffs/:id", (req, res) => {
       if (!allowed) {
         return res.status(403).json({ message: "Access denied for this tariff" });
       }
-      db.query("DELETE FROM Tariff_Plan WHERE tariff_id=?", [req.params.id], async (err) => {
-        if (err) return res.status(500).json({ message: "Failed to delete tariff", error: err.message });
-        res.send("Tariff Deleted");
-      });
+      dbQuery(
+        `DELETE ct
+         FROM Connection_Tariff ct
+         JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+         WHERE ct.tariff_id = ? AND sc.service_type = ?`,
+        [req.params.id, department]
+      )
+        .then(() => dbQuery("DELETE FROM Tariff_Plan WHERE tariff_id=?", [req.params.id]))
+        .then(() => res.send("Tariff Deleted"))
+        .catch((error) => {
+          res.status(500).json({ message: "Failed to delete tariff", error: error.message });
+        });
     })
     .catch((error) => sendError(res, "Failed to delete tariff", error));
 });
@@ -1820,168 +1947,180 @@ app.delete("/tariffs/:id", (req, res) => {
 // ✅ CONNECTION TARIFF
 //////////////////////////////////////////////////////
 
-// app.get("/connection-tariffs", (req, res) => {
-//   const department = requireDepartment(req, res);
-//   if (!department) {
-//     return;
-//   }
+app.get("/connection-tariffs", (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
 
-//   db.query(
-//     `SELECT
-//       ct.connection_tariff_id,
-//       ct.connection_id,
-//       ct.tariff_id,
-//       ct.tariff_id AS plan_id,
-//       ct.start_date,
-//       ct.start_date AS effective_from,
-//       ct.end_date,
-//       CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
-//      FROM Connection_Tariff ct
-//     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-//      LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
-//     WHERE sc.service_type = ?
-//      ORDER BY ct.connection_tariff_id DESC`,
-//       [department],
-//     (err, result) => {
-//     if (err) return sendError(res, "Failed to fetch connection tariffs", err);
-//     res.json(result);
-//     }
-//   );
-// });
+  db.query(
+    `SELECT
+      ct.connection_tariff_id,
+      ct.connection_id,
+      ct.tariff_id,
+      ct.tariff_id AS plan_id,
+      ct.start_date,
+      ct.start_date AS effective_from,
+      ct.end_date,
+      CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
+     FROM Connection_Tariff ct
+     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+     LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+     WHERE sc.service_type = ?
+    ORDER BY ct.connection_tariff_id ASC`,
+    [department],
+    (err, result) => {
+      if (err) return sendError(res, "Failed to fetch connection tariffs", err);
+      res.json(result);
+    }
+  );
+});
 
-// app.get("/connection-tariffs/:id", (req, res) => {
-//   const department = requireDepartment(req, res);
-//   if (!department) {
-//     return;
-//   }
+app.get("/connection-tariffs/:id", (req, res) => {
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
 
-//   db.query(
-//     `SELECT
-//       ct.connection_tariff_id,
-//       ct.connection_id,
-//       ct.tariff_id,
-//       ct.tariff_id AS plan_id,
-//       ct.start_date,
-//       ct.start_date AS effective_from,
-//       ct.end_date,
-//       CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
-//      FROM Connection_Tariff ct
-//      JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-//      LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
-//      WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
-//     [req.params.id, department],
-//     (err, result) => {
-//       if (err) return sendError(res, "Failed to fetch connection tariff", err);
-//       if (!result.length) return res.status(404).json({ message: "Connection tariff not found" });
-//       res.json(result[0]);
-//     }
-//   );
-// });
+  db.query(
+    `SELECT
+      ct.connection_tariff_id,
+      ct.connection_id,
+      ct.tariff_id,
+      ct.tariff_id AS plan_id,
+      ct.start_date,
+      ct.start_date AS effective_from,
+      ct.end_date,
+      CONCAT(tp.service_type, ' - ', tp.consumer_type) AS plan_name
+     FROM Connection_Tariff ct
+     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+     LEFT JOIN Tariff_Plan tp ON tp.tariff_id = ct.tariff_id
+     WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
+    [req.params.id, department],
+    (err, result) => {
+      if (err) return sendError(res, "Failed to fetch connection tariff", err);
+      if (!result.length) return res.status(404).json({ message: "Connection tariff not found" });
+      res.json(result[0]);
+    }
+  );
+});
 
-// app.post("/connection-tariffs", async (req, res) => {
-//   const department = requireDepartment(req, res);
-//   if (!department) {
-//     return;
-//   }
+app.post("/connection-tariffs", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
 
-//   const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
 
-//   try {
-//     if (!(await hasConnectionAccess(connection_id, department))) {
-//       return res.status(403).json({ message: "Access denied for selected connection" });
-//     }
+  const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
 
-//     const selectedTariffId = tariff_id || plan_id;
-//     if (!(await hasTariffAccess(selectedTariffId, department))) {
-//       return res.status(403).json({ message: "Access denied for selected tariff" });
-//     }
+  try {
+    if (!(await hasConnectionAccess(connection_id, department))) {
+      return res.status(403).json({ message: "Access denied for selected connection" });
+    }
 
-//     const connection_tariff_id = await nextId("Connection_Tariff", "connection_tariff_id");
-//     await dbQuery(
-//       `INSERT INTO Connection_Tariff (connection_tariff_id, start_date, end_date, connection_id, tariff_id)
-//        VALUES (?, ?, ?, ?, ?)`,
-//       [
-//         connection_tariff_id,
-//         start_date || effective_from || null,
-//         end_date || null,
-//         connection_id,
-//         tariff_id || plan_id
-//       ]
-//     );
-//     res.status(201).json({ message: "Connection Tariff Added", connection_tariff_id });
-//   } catch (error) {
-//     res.status(500).json({ message: "Failed to add connection tariff", error: error.message });
-//   }
-// });
+    const selectedTariffId = tariff_id || plan_id;
+    if (!(await hasTariffAccess(selectedTariffId, department))) {
+      return res.status(403).json({ message: "Access denied for selected tariff" });
+    }
 
-// app.put("/connection-tariffs/:id", async (req, res) => {
-//   const department = requireDepartment(req, res);
-//   if (!department) {
-//     return;
-//   }
+    const connection_tariff_id = await nextId("Connection_Tariff", "connection_tariff_id");
+    await dbQuery(
+      `INSERT INTO Connection_Tariff (connection_tariff_id, start_date, end_date, connection_id, tariff_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        connection_tariff_id,
+        start_date || effective_from || null,
+        end_date || null,
+        connection_id,
+        tariff_id || plan_id
+      ]
+    );
+    res.status(201).json({ message: "Connection Tariff Added", connection_tariff_id });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to add connection tariff", error: error.message });
+  }
+});
 
-//   const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
+app.put("/connection-tariffs/:id", async (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
 
-//   try {
-//     const existing = await dbQuery(
-//       `SELECT ct.connection_tariff_id
-//        FROM Connection_Tariff ct
-//        JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-//        WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
-//       [req.params.id, department]
-//     );
-//     if (!existing.length) {
-//       return res.status(403).json({ message: "Access denied for this connection tariff" });
-//     }
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
 
-//     if (!(await hasConnectionAccess(connection_id, department))) {
-//       return res.status(403).json({ message: "Access denied for selected connection" });
-//     }
+  const { connection_id, plan_id, tariff_id, effective_from, start_date, end_date } = req.body;
 
-//     const selectedTariffId = tariff_id || plan_id;
-//     if (!(await hasTariffAccess(selectedTariffId, department))) {
-//       return res.status(403).json({ message: "Access denied for selected tariff" });
-//     }
+  try {
+    const existing = await dbQuery(
+      `SELECT ct.connection_tariff_id
+       FROM Connection_Tariff ct
+       JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+       WHERE ct.connection_tariff_id = ? AND sc.service_type = ?`,
+      [req.params.id, department]
+    );
+    if (!existing.length) {
+      return res.status(403).json({ message: "Access denied for this connection tariff" });
+    }
 
-//     await dbQuery(
-//       `UPDATE Connection_Tariff
-//        SET connection_id=?, tariff_id=?, start_date=?, end_date=?
-//        WHERE connection_tariff_id=?`,
-//       [
-//         connection_id,
-//         tariff_id || plan_id,
-//         start_date || effective_from || null,
-//         end_date || null,
-//         req.params.id
-//       ]
-//     );
-//     res.json({ message: "Connection Tariff Updated" });
-//   } catch (error) {
-//     res.status(500).json({ message: "Failed to update connection tariff", error: error.message });
-//   }
-// });
+    if (!(await hasConnectionAccess(connection_id, department))) {
+      return res.status(403).json({ message: "Access denied for selected connection" });
+    }
 
-// app.delete("/connection-tariffs/:id", (req, res) => {
-//   const department = requireDepartment(req, res);
-//   if (!department) {
-//     return;
-//   }
+    const selectedTariffId = tariff_id || plan_id;
+    if (!(await hasTariffAccess(selectedTariffId, department))) {
+      return res.status(403).json({ message: "Access denied for selected tariff" });
+    }
 
-//   db.query(
-//     `DELETE ct
-//      FROM Connection_Tariff ct
-//      JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
-//      WHERE ct.connection_tariff_id=? AND sc.service_type = ?`,
-//     [req.params.id, department],
-//     (err, result) => {
-//       if (err) return res.status(500).json({ message: "Failed to delete connection tariff", error: err.message });
-//       if (!result.affectedRows) {
-//         return res.status(403).json({ message: "Access denied for this connection tariff" });
-//       }
-//       res.send("Connection Tariff Deleted");
-//     }
-//   );
-// });
+    await dbQuery(
+      `UPDATE Connection_Tariff
+       SET connection_id=?, tariff_id=?, start_date=?, end_date=?
+       WHERE connection_tariff_id=?`,
+      [
+        connection_id,
+        tariff_id || plan_id,
+        start_date || effective_from || null,
+        end_date || null,
+        req.params.id
+      ]
+    );
+    res.json({ message: "Connection Tariff Updated" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update connection tariff", error: error.message });
+  }
+});
+
+app.delete("/connection-tariffs/:id", (req, res) => {
+  if (!ensureWriteAccess(req, res)) {
+    return;
+  }
+
+  const department = requireDepartment(req, res);
+  if (!department) {
+    return;
+  }
+
+  db.query(
+    `DELETE ct
+     FROM Connection_Tariff ct
+     JOIN Service_Connection sc ON sc.connection_id = ct.connection_id
+     WHERE ct.connection_tariff_id=? AND sc.service_type = ?`,
+    [req.params.id, department],
+    (err, result) => {
+      if (err) return res.status(500).json({ message: "Failed to delete connection tariff", error: err.message });
+      if (!result.affectedRows) {
+        return res.status(403).json({ message: "Access denied for this connection tariff" });
+      }
+      res.send("Connection Tariff Deleted");
+    }
+  );
+});
 
 //////////////////////////////////////////////////////
 

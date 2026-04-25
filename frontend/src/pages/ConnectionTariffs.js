@@ -28,10 +28,10 @@ function ConnectionTariffs({ department }) {
     ]).then(([connectionsRes, tariffsRes, connectionTariffsRes]) => {
       const filteredConnections = connectionsRes.data.filter(
         (c) => c.service_type === department
-      );
+      ).sort((a, b) => Number(a.connection_id) - Number(b.connection_id));
       const filteredTariffs = tariffsRes.data.filter(
         (t) => t.service_type === department
-      );
+      ).sort((a, b) => Number(a.tariff_id) - Number(b.tariff_id));
 
       const connectionIds = new Set(filteredConnections.map((c) => Number(c.connection_id)));
       const tariffIds = new Set(filteredTariffs.map((t) => Number(t.tariff_id)));
@@ -40,7 +40,7 @@ function ConnectionTariffs({ department }) {
         (ct) =>
           connectionIds.has(Number(ct.connection_id)) &&
           tariffIds.has(Number(ct.tariff_id))
-      );
+      ).sort((a, b) => Number(a.connection_tariff_id) - Number(b.connection_tariff_id));
 
       setConnections(filteredConnections);
       setTariffs(filteredTariffs);
@@ -226,7 +226,7 @@ function ConnectionTariffs({ department }) {
               <td>{d.connection_tariff_id}</td>
               <td>{d.connection_id}</td>
               <td>{d.plan_name || d.tariff_id}</td>
-              <td>{d.start_date?.split("T")[0]}</td>
+              <td>{d.start_date ? d.start_date.split("T")[0] : "-"}</td>
               <td>{d.end_date ? d.end_date.split("T")[0] : "Active"}</td>
             </tr>
           ))}

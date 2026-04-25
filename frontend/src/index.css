@@ -368,27 +368,44 @@ body::before {
 
 .ops-shell h1 {
   margin-top: 0;
+  margin-bottom: 6px;
 }
 
-.ops-shell p {
+.ops-intro {
   color: var(--muted);
+  margin-top: 0;
+  margin-bottom: 14px;
 }
 
 .ops-search {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin: 14px 0 18px;
+  margin: 12px 0 18px;
+  align-items: center;
 }
 
 .ops-search input {
-  min-width: 220px;
+  min-width: 280px;
+  flex: 1;
+  max-width: 480px;
 }
 
 .ops-profile-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.ops-card-profile {
+  position: static;
+}
+
+.ops-stack {
+  display: grid;
+  gap: 16px;
+  align-content: start;
 }
 
 .ops-card {
@@ -402,6 +419,27 @@ body::before {
 .ops-card h3 {
   margin-top: 0;
   margin-bottom: 10px;
+  font-size: 1.04rem;
+  letter-spacing: 0.2px;
+}
+
+.ops-profile-fields {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ops-profile-fields p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.ops-subtitle {
+  margin: 0 0 10px;
+  font-size: 0.95rem;
+  color: var(--ink-1);
 }
 
 .ops-table-wrap {
@@ -420,9 +458,9 @@ body::before {
 
 .ops-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 12px;
+  margin-top: 0;
 }
 
 .ops-kpi {
@@ -432,6 +470,10 @@ body::before {
   display: grid;
   gap: 6px;
   background: linear-gradient(140deg, rgba(15, 139, 141, 0.08), rgba(255, 209, 102, 0.12));
+}
+
+.ops-card-table {
+  min-height: 100%;
 }
 
 .ops-kpi span {
@@ -446,6 +488,10 @@ body::before {
 @media (max-width: 1100px) {
   .ops-profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ops-card-profile {
+    position: static;
   }
 
   .ops-kpi-grid {
@@ -632,6 +678,47 @@ body::before {
   color: #bc2035;
   margin: 0 0 10px;
   font-weight: 500;
+}
+
+.auth-forgot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.auth-forgot-head h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #214f49;
+}
+
+.auth-back-inline,
+.auth-link-btn {
+  border: 0;
+  background: transparent;
+  color: #1f6f67;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.auth-link-btn {
+  margin: -2px 0 10px;
+  text-align: left;
+}
+
+.auth-back-inline:hover,
+.auth-link-btn:hover {
+  color: #0f5a53;
+  text-decoration: underline;
+}
+
+.auth-helper {
+  margin: 0 0 12px;
+  color: #3a5f5a;
+  font-size: 0.9rem;
 }
 
 .auth-submit {

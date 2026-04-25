@@ -20,6 +20,7 @@ const setUsers = (users) => {
 
 function AuthPage({ onAuthSuccess }) {
   const [mode, setMode] = useState("signin");
+  const [authStep, setAuthStep] = useState("signin");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [form, setForm] = useState({
@@ -31,9 +32,18 @@ function AuthPage({ onAuthSuccess }) {
   });
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
+  const [forgot, setForgot] = useState({
+    email: "",
+    name: "",
+    department: "Electricity",
+    newPassword: "",
+    confirmNewPassword: ""
+  });
+  const [forgotEmailLocked, setForgotEmailLocked] = useState("");
 
   useEffect(() => {
     setMode("signin");
+    setAuthStep("signin");
     setShowPassword(false);
     setShowConfirmPassword(false);
     setForm({
@@ -43,12 +53,26 @@ function AuthPage({ onAuthSuccess }) {
       confirmPassword: "",
       department: "Electricity"
     });
+    setForgot({
+      email: "",
+      name: "",
+      department: "Electricity",
+      newPassword: "",
+      confirmNewPassword: ""
+    });
+    setForgotEmailLocked("");
     setErrors({});
     setMessage("");
   }, []);
 
   const updateField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    setErrors((prev) => ({ ...prev, [field]: "" }));
+    setMessage("");
+  };
+
+  const updateForgotField = (field, value) => {
+    setForgot((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: "" }));
     setMessage("");
   };
@@ -83,9 +107,6 @@ function AuthPage({ onAuthSuccess }) {
     }
     if (!form.password) {
       nextErrors.password = "Password is required.";
-    }
-    if (!DEPARTMENTS.includes(form.department)) {
-      nextErrors.department = "Select a valid department.";
     }
 
     return nextErrors;
@@ -128,33 +149,134 @@ function AuthPage({ onAuthSuccess }) {
     const user = users.find(
       (u) =>
         u.email.toLowerCase() === form.email.trim().toLowerCase() &&
-        u.password === form.password &&
-        (u.department || form.department) === form.department
+        u.password === form.password
     );
 
     if (!user) {
-      setMessage("Invalid credentials or wrong department selected.");
+      setMessage("Invalid credentials.");
       return;
     }
 
-    if (!user.department) {
-      const updatedUsers = users.map((u) =>
-        u.email.toLowerCase() === user.email.toLowerCase()
-          ? { ...u, department: form.department }
-          : u
-      );
-      setUsers(updatedUsers);
+    if (!DEPARTMENTS.includes(user.department)) {
+      setMessage("This account has no valid department assigned. Please sign up again.");
+      return;
     }
 
     onAuthSuccess({
       name: user.name,
       email: user.email,
-      department: user.department || form.department
+      department: user.department
     });
+  };
+
+  const openForgotPassword = () => {
+    setAuthStep("forgot-verify");
+    setMessage("");
+    setErrors({});
+    setForgot((prev) => ({
+      ...prev,
+      email: form.email || "",
+      name: "",
+      department: "Electricity",
+      newPassword: "",
+      confirmNewPassword: ""
+    }));
+    setForgotEmailLocked("");
+  };
+
+  const handleForgotVerification = () => {
+    const nextErrors = {};
+
+    if (!EMAIL_REGEX.test(forgot.email.trim())) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+    if (!NAME_REGEX.test(forgot.name.trim())) {
+      nextErrors.name = "Enter your registered name.";
+    }
+    if (!DEPARTMENTS.includes(forgot.department)) {
+      nextErrors.department = "Select a valid department.";
+    }
+
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    const users = getUsers();
+    const user = users.find(
+      (u) =>
+        u.email.toLowerCase() === forgot.email.trim().toLowerCase() &&
+        u.name.trim().toLowerCase() === forgot.name.trim().toLowerCase() &&
+        u.department === forgot.department
+    );
+
+    if (!user) {
+      setMessage("Verification failed. Check your registered email, name, and department.");
+      return;
+    }
+
+    setForgotEmailLocked(user.email.toLowerCase());
+    setAuthStep("forgot-reset");
+    setErrors({});
+    setMessage("Identity verified. Set a new password.");
+  };
+
+  const handleForgotReset = () => {
+    const nextErrors = {};
+
+    if (!STRONG_PASSWORD_REGEX.test(forgot.newPassword)) {
+      nextErrors.newPassword = "Password must be 8+ chars with upper, lower, number, and symbol.";
+    }
+
+    if (forgot.newPassword !== forgot.confirmNewPassword) {
+      nextErrors.confirmNewPassword = "Passwords do not match.";
+    }
+
+    if (Object.keys(nextErrors).length) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    const users = getUsers();
+    const nextUsers = users.map((user) => {
+      if (user.email.toLowerCase() === forgotEmailLocked.toLowerCase()) {
+        return {
+          ...user,
+          password: forgot.newPassword
+        };
+      }
+      return user;
+    });
+
+    setUsers(nextUsers);
+    setAuthStep("signin");
+    setMode("signin");
+    setForm((prev) => ({ ...prev, email: forgotEmailLocked, password: "", confirmPassword: "" }));
+    setForgot({
+      email: "",
+      name: "",
+      department: "Electricity",
+      newPassword: "",
+      confirmNewPassword: ""
+    });
+    setForgotEmailLocked("");
+    setErrors({});
+    setMessage("Password reset successful. Please sign in with your new password.");
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    if (authStep === "forgot-verify") {
+      handleForgotVerification();
+      return;
+    }
+
+    if (authStep === "forgot-reset") {
+      handleForgotReset();
+      return;
+    }
+
     if (mode === "signup") {
       handleSignUp();
       return;
@@ -172,33 +294,146 @@ function AuthPage({ onAuthSuccess }) {
       </div>
 
       <form className="auth-card" onSubmit={handleSubmit} autoComplete="off">
-        <div className="auth-tabs">
-          <button
-            type="button"
-            className={mode === "signin" ? "auth-tab auth-tab-active" : "auth-tab"}
-            onClick={() => {
-              setMode("signin");
-              setShowConfirmPassword(false);
-              setErrors({});
-              setMessage("");
-            }}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            className={mode === "signup" ? "auth-tab auth-tab-active" : "auth-tab"}
-            onClick={() => {
-              setMode("signup");
-              setErrors({});
-              setMessage("");
-            }}
-          >
-            Sign Up
-          </button>
-        </div>
+        {authStep === "signin" && (
+          <div className="auth-tabs">
+            <button
+              type="button"
+              className={mode === "signin" ? "auth-tab auth-tab-active" : "auth-tab"}
+              onClick={() => {
+                setMode("signin");
+                setShowConfirmPassword(false);
+                setErrors({});
+                setMessage("");
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              className={mode === "signup" ? "auth-tab auth-tab-active" : "auth-tab"}
+              onClick={() => {
+                setMode("signup");
+                setErrors({});
+                setMessage("");
+              }}
+            >
+              Sign Up
+            </button>
+          </div>
+        )}
 
-        {mode === "signup" && (
+        {authStep !== "signin" && (
+          <div className="auth-forgot-head">
+            <h3>Reset Password</h3>
+            <button
+              type="button"
+              className="auth-back-inline"
+              onClick={() => {
+                setAuthStep("signin");
+                setErrors({});
+                setMessage("");
+              }}
+            >
+              Back to Sign In
+            </button>
+          </div>
+        )}
+
+        {authStep === "forgot-verify" && (
+          <>
+            <p className="auth-helper">Verify your account details before creating a new password.</p>
+
+            <div className="auth-field-wrap">
+              <label>Registered Email</label>
+              <input
+                type="email"
+                value={forgot.email}
+                onChange={(e) => updateForgotField("email", e.target.value)}
+                placeholder="name@example.com"
+              />
+              {errors.email && <small className="auth-error">{errors.email}</small>}
+            </div>
+
+            <div className="auth-field-wrap">
+              <label>Registered Full Name</label>
+              <input
+                value={forgot.name}
+                onChange={(e) => updateForgotField("name", e.target.value)}
+                placeholder="Enter registered name"
+              />
+              {errors.name && <small className="auth-error">{errors.name}</small>}
+            </div>
+
+            <div className="auth-field-wrap">
+              <label>Department</label>
+              <select
+                value={forgot.department}
+                onChange={(e) => updateForgotField("department", e.target.value)}
+              >
+                {DEPARTMENTS.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
+              {errors.department && <small className="auth-error">{errors.department}</small>}
+            </div>
+          </>
+        )}
+
+        {authStep === "forgot-reset" && (
+          <>
+            <p className="auth-helper">
+              Verified account: <strong>{forgotEmailLocked}</strong>
+            </p>
+
+            <div className="auth-field-wrap">
+              <label>New Password</label>
+              <div className="auth-password-wrap">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={forgot.newPassword}
+                  onChange={(e) => updateForgotField("newPassword", e.target.value)}
+                  placeholder="Create new password"
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  &#128065;
+                </button>
+              </div>
+              {errors.newPassword && <small className="auth-error">{errors.newPassword}</small>}
+            </div>
+
+            <div className="auth-field-wrap">
+              <label>Confirm New Password</label>
+              <div className="auth-password-wrap">
+                <input
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={forgot.confirmNewPassword}
+                  onChange={(e) => updateForgotField("confirmNewPassword", e.target.value)}
+                  placeholder="Re-enter new password"
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                >
+                  &#128065;
+                </button>
+              </div>
+              {errors.confirmNewPassword && <small className="auth-error">{errors.confirmNewPassword}</small>}
+            </div>
+          </>
+        )}
+
+        {authStep === "signin" && mode === "signup" && (
           <div className="auth-field-wrap">
             <label>Name</label>
             <input
@@ -211,7 +446,7 @@ function AuthPage({ onAuthSuccess }) {
           </div>
         )}
 
-        <div className="auth-field-wrap">
+        {authStep === "signin" && <div className="auth-field-wrap">
           <label>Email</label>
           <input
             type="email"
@@ -221,24 +456,26 @@ function AuthPage({ onAuthSuccess }) {
             placeholder="name@example.com"
           />
           {errors.email && <small className="auth-error">{errors.email}</small>}
-        </div>
+        </div>}
 
-        <div className="auth-field-wrap">
-          <label>Department</label>
-          <select
-            value={form.department}
-            onChange={(e) => updateField("department", e.target.value)}
-          >
-            {DEPARTMENTS.map((department) => (
-              <option key={department} value={department}>
-                {department}
-              </option>
-            ))}
-          </select>
-          {errors.department && <small className="auth-error">{errors.department}</small>}
-        </div>
+        {authStep === "signin" && mode === "signup" && (
+          <div className="auth-field-wrap">
+            <label>Department</label>
+            <select
+              value={form.department}
+              onChange={(e) => updateField("department", e.target.value)}
+            >
+              {DEPARTMENTS.map((department) => (
+                <option key={department} value={department}>
+                  {department}
+                </option>
+              ))}
+            </select>
+            {errors.department && <small className="auth-error">{errors.department}</small>}
+          </div>
+        )}
 
-        <div className="auth-field-wrap">
+        {authStep === "signin" && <div className="auth-field-wrap">
           <label>Password</label>
           <div className="auth-password-wrap">
             <input
@@ -259,9 +496,9 @@ function AuthPage({ onAuthSuccess }) {
             </button>
           </div>
           {errors.password && <small className="auth-error">{errors.password}</small>}
-        </div>
+        </div>}
 
-        {mode === "signup" && (
+        {authStep === "signin" && mode === "signup" && (
           <div className="auth-field-wrap">
             <label>Confirm Password</label>
             <div className="auth-password-wrap">
@@ -286,10 +523,22 @@ function AuthPage({ onAuthSuccess }) {
           </div>
         )}
 
+        {authStep === "signin" && mode === "signin" && (
+          <button type="button" className="auth-link-btn" onClick={openForgotPassword}>
+            Forgot Password?
+          </button>
+        )}
+
         {message && <p className="auth-message">{message}</p>}
 
         <button type="submit" className="auth-submit">
-          {mode === "signup" ? "Create Account" : "Login"}
+          {authStep === "forgot-verify"
+            ? "Verify Account"
+            : authStep === "forgot-reset"
+              ? "Reset Password"
+              : mode === "signup"
+                ? "Create Account"
+                : "Login"}
         </button>
       </form>
     </div>

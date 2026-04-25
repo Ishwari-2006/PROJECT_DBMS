@@ -1,9 +1,9 @@
 import { useState } from "react";
 import axios from "axios";
 
-function DataTable({ title, rows, columns }) {
+function DataTable({ title, rows, columns, className = "" }) {
   return (
-    <div className="ops-card">
+    <div className={`ops-card ${className}`.trim()}>
       <h3>{title}</h3>
       {!rows.length ? (
         <p className="ops-empty">No data available.</p>
@@ -73,7 +73,7 @@ function ConsumerSearch() {
   return (
     <div className="ops-shell">
       <h1>Consumer Search Workbench</h1>
-      <p>Search by consumer name, consumer ID, or contact number and get the complete profile in one place.</p>
+      <p className="ops-intro">Search by consumer name, consumer ID, or contact number and get the complete profile in one place.</p>
 
       <form className="ops-search" onSubmit={handleSearch}>
         <input
@@ -128,36 +128,83 @@ function ConsumerSearch() {
 
       {profile && (
         <div className="ops-profile-grid">
-          <div className="ops-card">
+          <div className="ops-card ops-card-profile">
             <h3>Consumer Profile</h3>
-            <p><strong>ID:</strong> {profile.consumer?.consumer_id}</p>
-            <p><strong>Name:</strong> {profile.consumer?.name}</p>
-            <p><strong>Contact:</strong> {profile.consumer?.contact_no}</p>
-            <p><strong>Address:</strong> {profile.consumer?.address}</p>
-            <p><strong>Type:</strong> {profile.consumer?.consumer_type}</p>
-            <p><strong>Registration:</strong> {profile.consumer?.registration_date?.slice?.(0, 10) || profile.consumer?.registration_date}</p>
-            <hr />
-            <p><strong>Total Connections:</strong> {profile.quickStats?.totalConnections}</p>
-            <p><strong>Active Connections:</strong> {profile.quickStats?.activeConnections}</p>
-            <p><strong>Total Meters:</strong> {profile.quickStats?.totalMeters}</p>
-            <p><strong>Unpaid Bills:</strong> {profile.quickStats?.unpaidBills}</p>
-            <p><strong>Unpaid Amount:</strong> {Number(profile.quickStats?.unpaidAmount || 0).toFixed(2)}</p>
+            <div className="ops-profile-fields">
+              <p><strong>ID:</strong> {profile.consumer?.consumer_id}</p>
+              <p><strong>Name:</strong> {profile.consumer?.name}</p>
+              <p><strong>Contact:</strong> {profile.consumer?.contact_no}</p>
+              <p><strong>Address:</strong> {profile.consumer?.address}</p>
+              <p><strong>Type:</strong> {profile.consumer?.consumer_type}</p>
+              <p><strong>Registration:</strong> {profile.consumer?.registration_date?.slice?.(0, 10) || profile.consumer?.registration_date}</p>
+            </div>
+
+            <h4 className="ops-subtitle">Quick Stats</h4>
+            <div className="ops-kpi-grid">
+              <div className="ops-kpi">
+                <span>Total Connections</span>
+                <strong>{profile.quickStats?.totalConnections}</strong>
+              </div>
+              <div className="ops-kpi">
+                <span>Active Connections</span>
+                <strong>{profile.quickStats?.activeConnections}</strong>
+              </div>
+              <div className="ops-kpi">
+                <span>Total Meters</span>
+                <strong>{profile.quickStats?.totalMeters}</strong>
+              </div>
+              <div className="ops-kpi">
+                <span>Unpaid Bills</span>
+                <strong>{profile.quickStats?.unpaidBills}</strong>
+              </div>
+              <div className="ops-kpi">
+                <span>Unpaid Amount</span>
+                <strong>{Number(profile.quickStats?.unpaidAmount || 0).toFixed(2)}</strong>
+              </div>
+            </div>
           </div>
 
-          <DataTable
-            title={`Connections for Consumer #${selectedId}`}
-            rows={profile.connections || []}
-            columns={[
-              { key: "connection_id", label: "Connection ID" },
-              { key: "service_type", label: "Service" },
-              { key: "connection_status", label: "Status" },
-              { key: "installation_address", label: "Address" }
-            ]}
-          />
+          <div className="ops-stack">
+            <DataTable
+              title={`Connections for Consumer #${selectedId}`}
+              rows={profile.connections || []}
+              columns={[
+                { key: "connection_id", label: "Connection ID" },
+                { key: "service_type", label: "Service" },
+                { key: "connection_status", label: "Status" },
+                { key: "installation_address", label: "Address" }
+              ]}
+            />
+
+            <DataTable
+              title="Tariff Plan by Connection"
+              rows={(profile.tariffs || []).map((t) => ({
+                ...t,
+                tariff_id: t.tariff_id ?? "-",
+                rate_per_unit: t.rate_per_unit ?? "-",
+                fixed_charge: t.fixed_charge ?? "-",
+                tax_percentage: t.tax_percentage ?? "-",
+                start_date: t.start_date ? t.start_date.split("T")[0] : "-",
+                end_date: t.end_date ? t.end_date.split("T")[0] : "Active"
+              }))}
+              columns={[
+                { key: "connection_id", label: "Connection ID" },
+                { key: "connection_status", label: "Connection Status" },
+                { key: "plan_name", label: "Tariff Plan" },
+                { key: "tariff_id", label: "Tariff ID" },
+                { key: "rate_per_unit", label: "Rate/Unit" },
+                { key: "fixed_charge", label: "Fixed Charge" },
+                { key: "tax_percentage", label: "Tax %" },
+                { key: "start_date", label: "Start Date" },
+                { key: "end_date", label: "End Date" }
+              ]}
+            />
+          </div>
 
           <DataTable
             title="Meters"
             rows={profile.meters || []}
+            className="ops-card-table"
             columns={[
               { key: "meter_id", label: "Meter ID" },
               { key: "meter_number", label: "Meter Number" },
@@ -169,6 +216,7 @@ function ConsumerSearch() {
           <DataTable
             title="Recent Reading Records"
             rows={profile.records || []}
+            className="ops-card-table"
             columns={[
               { key: "reading_id", label: "Reading ID" },
               { key: "meter_id", label: "Meter ID" },
@@ -180,6 +228,7 @@ function ConsumerSearch() {
           <DataTable
             title="Recent Bills"
             rows={profile.bills || []}
+            className="ops-card-table"
             columns={[
               { key: "bill_id", label: "Bill ID" },
               { key: "bill_number", label: "Bill Number" },
@@ -192,6 +241,7 @@ function ConsumerSearch() {
           <DataTable
             title="Recent Payments"
             rows={profile.payments || []}
+            className="ops-card-table"
             columns={[
               { key: "payment_id", label: "Payment ID" },
               { key: "bill_id", label: "Bill ID" },

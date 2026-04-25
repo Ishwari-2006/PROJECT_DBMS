@@ -9,6 +9,7 @@ function Sidebar() {
     { to: "/meters", label: "Meters" },
     { to: "/records", label: "Reading Records" },
     { to: "/tariffs", label: "Tariff Plans" },
+    { to: "/connection-tariffs", label: "Connection Tariffs" },
     { to: "/bills", label: "Bills" },
     { to: "/payments", label: "Payments" },
     { to: "/alerts", label: "Alerts" },
