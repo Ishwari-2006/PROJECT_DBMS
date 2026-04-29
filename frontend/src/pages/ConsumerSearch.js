@@ -47,8 +47,11 @@ function ConsumerSearch() {
     setSelectedId(null);
 
     try {
+      const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+      const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
       const response = await axios.get("http://127.0.0.1:5000/search/consumers", {
-        params: { q: query.trim() }
+        params: { q: query.trim() },
+        headers: deptHeader ? { "x-department": deptHeader } : {}
       });
       setResults(response.data || []);
     } catch (err) {
@@ -62,7 +65,9 @@ function ConsumerSearch() {
     setSelectedId(consumerId);
 
     try {
-      const response = await axios.get(`http://127.0.0.1:5000/consumers/${consumerId}/profile`);
+      const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+      const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+      const response = await axios.get(`http://127.0.0.1:5000/consumers/${consumerId}/profile`, { headers: deptHeader ? { "x-department": deptHeader } : {} });
       setProfile(response.data || null);
     } catch (err) {
       setProfile(null);

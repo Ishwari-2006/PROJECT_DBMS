@@ -71,6 +71,16 @@ function AuthPage({ onAuthSuccess }) {
     setMessage("");
   };
 
+  const handleEmailBlur = () => {
+    const email = form.email?.trim().toLowerCase();
+    if (!email) return;
+    const users = getUsers();
+    const found = users.find((u) => u.email.toLowerCase() === email);
+    if (found && DEPARTMENTS.includes(found.department)) {
+      setForm((prev) => ({ ...prev, department: found.department }));
+    }
+  };
+
   const updateForgotField = (field, value) => {
     setForgot((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: "" }));
@@ -157,9 +167,24 @@ function AuthPage({ onAuthSuccess }) {
       return;
     }
 
+    // If the stored user has no valid department but the sign-in form
+    // includes a valid department selection, update the stored user
+    // and proceed. Otherwise require a valid stored department.
     if (!DEPARTMENTS.includes(user.department)) {
-      setMessage("This account has no valid department assigned. Please sign up again.");
-      return;
+      if (DEPARTMENTS.includes(form.department)) {
+        // persist department to stored users
+        const updated = users.map((u) => {
+          if (u.email.toLowerCase() === user.email.toLowerCase()) {
+            return { ...u, department: form.department };
+          }
+          return u;
+        });
+        setUsers(updated);
+        user.department = form.department;
+      } else {
+        setMessage("This account has no valid department assigned. Please sign up again.");
+        return;
+      }
     }
 
     onAuthSuccess({
@@ -453,12 +478,13 @@ function AuthPage({ onAuthSuccess }) {
             autoComplete="off"
             value={form.email}
             onChange={(e) => updateField("email", e.target.value)}
+            onBlur={handleEmailBlur}
             placeholder="name@example.com"
           />
           {errors.email && <small className="auth-error">{errors.email}</small>}
         </div>}
 
-        {authStep === "signin" && mode === "signup" && (
+        {authStep === "signin" && (
           <div className="auth-field-wrap">
             <label>Department</label>
             <select

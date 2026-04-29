@@ -17,12 +17,14 @@ function Payments({ department }) {
     payment_mode: "Cash",
     bill_id: ""
   });
+  const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+  const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
 
   const fetchData = useCallback(() => {
     Promise.all([
-      axios.get("http://127.0.0.1:5000/connections"),
-      axios.get("http://127.0.0.1:5000/bills"),
-      axios.get("http://127.0.0.1:5000/payments")
+        axios.get("http://127.0.0.1:5000/connections", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+        axios.get("http://127.0.0.1:5000/bills", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+        axios.get("http://127.0.0.1:5000/payments", { headers: deptHeader ? { "x-department": deptHeader } : {} })
     ])
       .then(([connectionsRes, billsRes, paymentsRes]) => {
         const connectionIds = new Set(
@@ -47,8 +49,9 @@ function Payments({ department }) {
         setBills([]);
         setData([]);
       });
-  }, [department]);
+  }, [department, deptHeader]);
 
+      
   useEffect(() => {
     fetchData();
   }, [fetchData]);

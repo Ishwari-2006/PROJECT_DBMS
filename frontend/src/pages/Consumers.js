@@ -23,7 +23,12 @@ function Consumers() {
   }, []);
 
   const fetchConsumers = () => {
-    axios.get("http://127.0.0.1:5000/consumers")
+    const session = (() => {
+      try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; }
+    })();
+    const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+
+    axios.get("http://127.0.0.1:5000/consumers", { headers: deptHeader ? { "x-department": deptHeader } : {} })
       .then(res => setData(res.data))
       .catch(() => setData([]));
   };

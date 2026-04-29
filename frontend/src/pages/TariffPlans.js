@@ -20,7 +20,10 @@ function TariffPlans({ department }) {
   });
 
   const fetchData = useCallback(() => {
-    axios.get("http://127.0.0.1:5000/tariffs")
+    const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+    const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+
+    axios.get("http://127.0.0.1:5000/tariffs", { headers: deptHeader ? { "x-department": deptHeader } : {} })
       .then((res) => {
         const sortedTariffs = res.data
           .filter((t) => t.service_type === department)

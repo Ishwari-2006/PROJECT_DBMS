@@ -24,13 +24,23 @@ function Bills({ department }) {
 
   const [editId, setEditId] = useState(null);
 
+  const getDepartmentHeader = () => {
+    try {
+      const session = JSON.parse(localStorage.getItem("ubms_session") || "null");
+      return (axios.defaults.headers?.common?.["x-department"]) || session?.department || null;
+    } catch {
+      return (axios.defaults.headers?.common?.["x-department"]) || null;
+    }
+  };
+
   // FETCH DATA
   const fetchBills = useCallback(() => {
+    const deptHeader = getDepartmentHeader();
     Promise.all([
-      axios.get("http://127.0.0.1:5000/connections"),
-      axios.get("http://127.0.0.1:5000/meters"),
-      axios.get("http://127.0.0.1:5000/records"),
-      axios.get("http://127.0.0.1:5000/bills")
+      axios.get("http://127.0.0.1:5000/connections", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+      axios.get("http://127.0.0.1:5000/meters", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+      axios.get("http://127.0.0.1:5000/records", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+      axios.get("http://127.0.0.1:5000/bills", { headers: deptHeader ? { "x-department": deptHeader } : {} })
     ])
       .then(([connectionsRes, metersRes, recordsRes, billsRes]) => {
         const filteredConnections = connectionsRes.data.filter(

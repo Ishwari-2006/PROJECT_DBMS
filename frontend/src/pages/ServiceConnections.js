@@ -21,8 +21,12 @@ function ServiceConnections({ department }) {
   });
 
   const fetchData = useCallback(() => {
-    axios
-      .get("http://127.0.0.1:5000/connections")
+    const session = (() => {
+      try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; }
+    })();
+    const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+
+    axios.get("http://127.0.0.1:5000/connections", { headers: deptHeader ? { "x-department": deptHeader } : {} })
       .then((res) => setData(res.data.filter((d) => d.service_type === department)))
       .catch(() => setData([]));
   }, [department]);

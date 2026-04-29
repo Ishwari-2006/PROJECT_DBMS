@@ -7,7 +7,10 @@ function Records() {
   const [editId] = useState(null);
 
   useEffect(() => {
-    axios.get("http://127.0.0.1:5000/meters").then(res => setMeters(res.data));
+    const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+    const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+
+    axios.get("http://127.0.0.1:5000/meters", { headers: deptHeader ? { "x-department": deptHeader } : {} }).then(res => setMeters(res.data));
   }, []);
 
   const handleSubmit = async () => {

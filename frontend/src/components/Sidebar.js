@@ -12,7 +12,6 @@ function Sidebar() {
     { to: "/connection-tariffs", label: "Connection Tariffs" },
     { to: "/bills", label: "Bills" },
     { to: "/payments", label: "Payments" },
-    { to: "/alerts", label: "Alerts" },
     { to: "/reports", label: "Reports" }
   ];
 

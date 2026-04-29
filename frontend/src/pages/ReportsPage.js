@@ -11,21 +11,20 @@ function ReportsPage() {
     setError("");
 
     try {
+      const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
+      const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
       const response = await axios.get("http://127.0.0.1:5000/reports/department-summary", {
         params: {
           from: form.from || undefined,
           to: form.to || undefined
-        }
+        },
+        headers: deptHeader ? { "x-department": deptHeader } : {}
       });
       setSummary(response.data || null);
     } catch (err) {
       setSummary(null);
       setError(err?.response?.data?.message || "Failed to generate report.");
     }
-  };
-
-  const downloadCsv = () => {
-    window.open("http://127.0.0.1:5000/reports/department-summary/export.csv", "_blank");
   };
 
   return (
@@ -45,7 +44,6 @@ function ReportsPage() {
           onChange={(e) => setForm((prev) => ({ ...prev, to: e.target.value }))}
         />
         <button type="submit">Generate Summary</button>
-        <button type="button" onClick={downloadCsv}>Download Bills CSV</button>
       </form>
 
       {error && <p className="ops-error">{error}</p>}

@@ -22,10 +22,15 @@ function Records({ department }) {
 
   // FETCH DATA
   const fetchRecords = useCallback(() => {
+    const session = (() => {
+      try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; }
+    })();
+    const deptHeader = (axios.defaults.headers?.common?.["x-department"]) || (session && session.department) || null;
+
     Promise.all([
-      axios.get("http://127.0.0.1:5000/connections"),
-      axios.get("http://127.0.0.1:5000/meters"),
-      axios.get("http://127.0.0.1:5000/records")
+      axios.get("http://127.0.0.1:5000/connections", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+      axios.get("http://127.0.0.1:5000/meters", { headers: deptHeader ? { "x-department": deptHeader } : {} }),
+      axios.get("http://127.0.0.1:5000/records", { headers: deptHeader ? { "x-department": deptHeader } : {} })
     ])
       .then(([connectionsRes, metersRes, recordsRes]) => {
         const connectionIds = new Set(
