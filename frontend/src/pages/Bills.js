@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -11,6 +12,8 @@ function Bills({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("bill_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const [form, setForm] = useState({
     bill_number: "",
@@ -80,14 +83,25 @@ function Bills({ department }) {
 
   // ADD / UPDATE
   const handleSubmit = async () => {
+    setError("");
+    
     if (
       !form.bill_number ||
       !form.total_amount ||
       !form.connection_id ||
       !form.reading_id
     ) {
-      alert("Fill required fields");
+      setError("Fill required fields");
       return;
+    }
+
+    // Validate due_date is not in future (if provided)
+    if (form.due_date) {
+      const dateError = validateDateNotFuture(form.due_date);
+      if (dateError) {
+        setError(dateError);
+        return;
+      }
     }
 
     try {
@@ -117,7 +131,7 @@ function Bills({ department }) {
     } catch (err) {
       const message = err?.response?.data?.message || "Failed to save bill";
       const detail = err?.response?.data?.error;
-      alert(detail ? `${message}: ${detail}` : message);
+      setError(detail ? `${message}: ${detail}` : message);
     }
   };
 
@@ -259,6 +273,7 @@ function Bills({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <input
             name="bill_number"
@@ -280,6 +295,7 @@ function Bills({ department }) {
           />
           <input
             type="date"
+            max={todayDate}
             name="due_date"
             value={form.due_date}
             onChange={handleChange}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -12,6 +13,8 @@ function ConnectionTariffs({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("connection_tariff_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const [form, setForm] = useState({
     connection_id: "",
@@ -60,6 +63,25 @@ function ConnectionTariffs({ department }) {
   }, [fetchData]);
 
   const handleSubmit = async () => {
+    setError("");
+    
+    // Validate start_date and end_date are not in future
+    if (form.start_date) {
+      const startError = validateDateNotFuture(form.start_date);
+      if (startError) {
+        setError(startError);
+        return;
+      }
+    }
+    
+    if (form.end_date) {
+      const endError = validateDateNotFuture(form.end_date);
+      if (endError) {
+        setError(endError);
+        return;
+      }
+    }
+    
     try {
       if (editId) {
         await axios.put(`http://127.0.0.1:5000/connection-tariffs/${editId}`, form);
@@ -78,7 +100,7 @@ function ConnectionTariffs({ department }) {
 
       fetchData();
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save connection tariff");
+      setError(err?.response?.data?.message || "Failed to save connection tariff");
     }
   };
 
@@ -177,6 +199,7 @@ function ConnectionTariffs({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <select
             value={form.connection_id}
@@ -202,11 +225,13 @@ function ConnectionTariffs({ department }) {
           </select>
           <input
             type="date"
+            max={todayDate}
             value={form.start_date}
             onChange={(e) => setForm({ ...form, start_date: e.target.value })}
           />
           <input
             type="date"
+            max={todayDate}
             value={form.end_date}
             onChange={(e) => setForm({ ...form, end_date: e.target.value })}
           />

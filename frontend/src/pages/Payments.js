@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -11,6 +12,8 @@ function Payments({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("payment_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
   const [form, setForm] = useState({
     payment_date: "",
     amount_paid: "",
@@ -57,8 +60,17 @@ function Payments({ department }) {
   }, [fetchData]);
 
   const handleSubmit = async () => {
+    setError("");
+    
     if (!form.payment_date || !form.amount_paid || !form.bill_id) {
-      alert("Fill all required fields");
+      setError("Fill all required fields");
+      return;
+    }
+
+    // Validate payment_date is not in future
+    const dateError = validateDateNotFuture(form.payment_date);
+    if (dateError) {
+      setError(dateError);
       return;
     }
 
@@ -79,7 +91,7 @@ function Payments({ department }) {
       setShowForm(false);
       fetchData();
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save payment");
+      setError(err?.response?.data?.message || "Failed to save payment");
     }
   };
 
@@ -181,9 +193,11 @@ function Payments({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <input
             type="date"
+            max={todayDate}
             value={form.payment_date}
             onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
           />

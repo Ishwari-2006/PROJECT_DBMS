@@ -31,6 +31,22 @@ function App() {
     localStorage.setItem("ubms_session", JSON.stringify(user));
   };
 
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem("ut_theme") || "light";
+    } catch {
+      return "light";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("ut_theme", theme);
+    } catch {}
+    if (theme === "dark") document.body.classList.add("theme-dark");
+    else document.body.classList.remove("theme-dark");
+  }, [theme]);
+
   const handleLogout = () => {
     localStorage.removeItem("ubms_session");
     setCurrentUser(null);
@@ -62,6 +78,13 @@ function App() {
               </div>
               <div className="topbar-actions">
                 <span>{currentUser.name} | {currentUser.department} | Employee</span>
+                <button
+                  className="theme-toggle"
+                  title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                  onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+                >
+                  {theme === "dark" ? "Light" : "Dark"}
+                </button>
                 <button onClick={handleLogout}>Logout</button>
               </div>
             </header>

@@ -1,14 +1,24 @@
 import { useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateRange } from "../utils/dateValidation";
 
 function ReportsPage() {
   const [form, setForm] = useState({ from: "", to: "" });
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const generate = async (e) => {
     e.preventDefault();
     setError("");
+
+    // Validate dates are not in future
+    const dateValidationError = validateDateRange(form.from, form.to);
+    if (dateValidationError) {
+      setError(dateValidationError);
+      setSummary(null);
+      return;
+    }
 
     try {
       const session = (() => { try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; } })();
@@ -35,11 +45,13 @@ function ReportsPage() {
       <form className="ops-search" onSubmit={generate}>
         <input
           type="date"
+          max={todayDate}
           value={form.from}
           onChange={(e) => setForm((prev) => ({ ...prev, from: e.target.value }))}
         />
         <input
           type="date"
+          max={todayDate}
           value={form.to}
           onChange={(e) => setForm((prev) => ({ ...prev, to: e.target.value }))}
         />

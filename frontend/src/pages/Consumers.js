@@ -1,6 +1,7 @@
 // React and HTTP client
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 
 // Shared UI components used across pages
 import TableControls from "../components/TableControls";
@@ -24,6 +25,8 @@ function Consumers() {
     registration_date: ""
   });
   const [editId, setEditId] = useState(null);
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   // On mount fetch the consumer list once.
   useEffect(() => {
@@ -54,7 +57,14 @@ function Consumers() {
   // Uses POST for create and PUT for update (when editId is set).
   const handleSubmit = async () => {
     if (!form.name || !form.address || !form.registration_date) {
-      alert("Fill all fields");
+      setError("Fill all fields");
+      return;
+    }
+
+    // Validate registration_date is not in future
+    const dateError = validateDateNotFuture(form.registration_date);
+    if (dateError) {
+      setError(dateError);
       return;
     }
 
@@ -77,11 +87,12 @@ function Consumers() {
         registration_date: ""
       });
       setShowForm(false);
+      setError("");
 
       fetchConsumers();
 
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save consumer");
+      setError(err?.response?.data?.message || "Failed to save consumer");
     }
   };
 
@@ -182,6 +193,7 @@ function Consumers() {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <input
             className="full-span"
@@ -215,6 +227,7 @@ function Consumers() {
           <input
             className="full-span"
             type="date"
+            max={todayDate}
             name="registration_date"
             value={form.registration_date}
             onChange={handleChange}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -10,6 +11,8 @@ function TariffPlans({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("tariff_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const [form, setForm] = useState({
     consumer_type: "Residential",
@@ -38,6 +41,17 @@ function TariffPlans({ department }) {
   }, [fetchData]);
 
   const handleSubmit = async () => {
+    setError("");
+    
+    // Validate effective_from is not in future (if provided)
+    if (form.effective_from) {
+      const dateError = validateDateNotFuture(form.effective_from);
+      if (dateError) {
+        setError(dateError);
+        return;
+      }
+    }
+    
     try {
       if (editId) {
         await axios.put(`http://127.0.0.1:5000/tariffs/${editId}`, {
@@ -63,7 +77,7 @@ function TariffPlans({ department }) {
 
       fetchData();
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save tariff");
+      setError(err?.response?.data?.message || "Failed to save tariff");
     }
   };
 
@@ -162,6 +176,7 @@ function TariffPlans({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <select
             value={form.consumer_type}
@@ -189,6 +204,7 @@ function TariffPlans({ department }) {
           <input
             className="full-span"
             type="date"
+            max={todayDate}
             value={form.effective_from}
             onChange={(e) => setForm({ ...form, effective_from: e.target.value })}
           />

@@ -140,6 +140,29 @@ const normalizeSqlDate = (value) => {
   return null;
 };
 
+// validateDateNotFuture: check if a normalized date (YYYY-MM-DD) is not in the future.
+// Returns an error message if the date is in the future, or null if valid.
+const validateDateNotFuture = (dateString) => {
+  if (!dateString) {
+    return null;
+  }
+
+  const normalized = normalizeSqlDate(dateString);
+  if (!normalized) {
+    return "Invalid date format";
+  }
+
+  const inputDate = new Date(normalized + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (inputDate > today) {
+    return "Date cannot be in the future";
+  }
+
+  return null;
+};
+
 // Allowed tenancy departments — everything is scoped by department.
 const ALLOWED_DEPARTMENTS = ["Electricity", "Gas", "Water"];
 
@@ -575,6 +598,20 @@ app.get("/reports/department-summary", async (req, res) => {
     const from = req.query.from ? normalizeSqlDate(req.query.from) : null;
     const to = req.query.to ? normalizeSqlDate(req.query.to) : null;
 
+    // Validate dates are not in future
+    if (from) {
+      const fromError = validateDateNotFuture(from);
+      if (fromError) {
+        return sendError(res, fromError, null, 400);
+      }
+    }
+    if (to) {
+      const toError = validateDateNotFuture(to);
+      if (toError) {
+        return sendError(res, toError, null, 400);
+      }
+    }
+
     const dateClause = from && to ? "AND b.due_date BETWEEN ? AND ?" : "";
     const dateParams = from && to ? [from, to] : [];
 
@@ -730,6 +767,12 @@ app.post("/consumers", async (req, res) => {
     return res.status(400).json({ message: "registration_date is required and must be a valid date" });
   }
 
+  // Validate registration_date is not in future
+  const dateError = validateDateNotFuture(normalizedRegistrationDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
+
   try {
     const consumer_id = await nextId("Consumer", "consumer_id");
     await dbQuery(
@@ -761,6 +804,13 @@ app.put("/consumers/:id", async (req, res) => {
 
   if (!normalizedRegistrationDate) {
     return res.status(400).json({ message: "registration_date is required and must be a valid date" });
+  }
+
+  // Validate registration_date is not in future
+  const dateError = validateDateNotFuture(normalizedRegistrationDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
   }
 
   db.query(
@@ -1027,6 +1077,13 @@ app.post("/meters", async (req, res) => {
     return res.status(400).json({ message: "All meter fields are required" });
   }
 
+  // Validate installation_date is not in future
+  const normalizedInstallationDate = normalizeSqlDate(installation_date);
+  const dateError = validateDateNotFuture(normalizedInstallationDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
+
   if (!(await hasConnectionAccess(connection_id, department))) {
     return res.status(403).json({ message: "Access denied for selected connection" });
   }
@@ -1035,7 +1092,7 @@ app.post("/meters", async (req, res) => {
     .then((meter_id) => {
       db.query(
         "INSERT INTO Meter (meter_id, meter_number, installation_date, meter_status, connection_id) VALUES (?, ?, ?, ?, ?)",
-        [meter_id, meter_number, installation_date, meter_status, connection_id],
+        [meter_id, meter_number, normalizedInstallationDate, meter_status, connection_id],
         async (err) => {
           if (err) {
             if (err.code === "ER_DUP_ENTRY") {
@@ -1182,6 +1239,13 @@ app.post("/records", async (req, res) => {
     return res.status(400).json({ message: "Consumption units must be a positive number" });
   }
 
+  // Validate reading_date is not in future
+  const normalizedReadingDate = normalizeSqlDate(reading_date);
+  const dateError = validateDateNotFuture(normalizedReadingDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
+
   try {
     if (!(await hasMeterAccess(meter_id, department))) {
       return res.status(403).json({ message: "Access denied for selected meter" });
@@ -1192,13 +1256,13 @@ app.post("/records", async (req, res) => {
 
     await dbQuery(
       `INSERT INTO ${readingTable} (reading_id, current_reading, consumption_units, reading_date, meter_id) VALUES (?, ?, ?, ?, ?)`,
-      [reading_id, current_reading, consumption_units, reading_date, meter_id]
+      [reading_id, current_reading, consumption_units, normalizedReadingDate, meter_id]
     );
 
     const autoBill = await createAutoBillForReading({
       reading_id,
       meter_id,
-      reading_date,
+      reading_date: normalizedReadingDate,
       consumption_units,
       department
     });
@@ -1229,6 +1293,13 @@ app.put("/records/:id", async (req, res) => {
     return res.status(400).json({ message: "Consumption units must be a positive number" });
   }
 
+  // Validate reading_date is not in future
+  const normalizedReadingDate = normalizeSqlDate(reading_date);
+  const dateError = validateDateNotFuture(normalizedReadingDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
+
   try {
     if (!(await hasRecordAccess(req.params.id, department))) {
       return res.status(403).json({ message: "Access denied for this record" });
@@ -1241,7 +1312,7 @@ app.put("/records/:id", async (req, res) => {
     const readingTable = await getReadingTableName();
     await dbQuery(
       `UPDATE ${readingTable} SET current_reading=?, consumption_units=?, reading_date=?, meter_id=? WHERE reading_id=?`,
-      [current_reading, consumption_units, reading_date, meter_id, req.params.id]
+      [current_reading, consumption_units, normalizedReadingDate, meter_id, req.params.id]
     );
     res.send("Record Updated");
   } catch (error) {
@@ -1361,11 +1432,21 @@ app.post("/bills", async (req, res) => {
     return res.status(403).json({ message: "Access denied for selected record" });
   }
 
+  // Validate due_date is not in future (if provided)
+  if (due_date) {
+    const normalizedDueDate = normalizeSqlDate(due_date);
+    const dateError = validateDateNotFuture(normalizedDueDate);
+    if (dateError) {
+      return res.status(400).json({ message: dateError });
+    }
+  }
+
   nextId("Bill", "bill_id")
     .then((bill_id) => {
+      const normalizedDueDate = normalizeSqlDate(due_date);
       db.query(
         "INSERT INTO Bill (bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [bill_id, bill_number, billing_period, total_amount, due_date, payment_status, connection_id, reading_id],
+        [bill_id, bill_number, billing_period, total_amount, normalizedDueDate, payment_status, connection_id, reading_id],
         async (err) => {
           if (err) return res.status(500).json({ message: "Failed to add bill", error: err.message });
           res.status(201).json({ message: "Bill Added", bill_id });
@@ -1552,6 +1633,13 @@ app.post("/payments", async (req, res) => {
 
   const { payment_date, amount_paid, payment_mode, bill_id } = req.body;
 
+  // Validate payment_date is not in future
+  const normalizedPaymentDate = normalizeSqlDate(payment_date);
+  const dateError = validateDateNotFuture(normalizedPaymentDate);
+  if (dateError) {
+    return res.status(400).json({ message: dateError });
+  }
+
   try {
     if (!(await hasBillAccess(bill_id, department))) {
       return res.status(403).json({ message: "Access denied for selected bill" });
@@ -1560,7 +1648,7 @@ app.post("/payments", async (req, res) => {
     const payment_id = await nextId("Payment", "payment_id");
     await dbQuery(
       "INSERT INTO Payment (payment_id, payment_date, amount_paid, payment_mode, bill_id) VALUES (?, ?, ?, ?, ?)",
-      [payment_id, payment_date, amount_paid, payment_mode, bill_id]
+      [payment_id, normalizedPaymentDate, amount_paid, payment_mode, bill_id]
     );
     await syncBillStatus(bill_id);
     res.status(201).json({ payment_id, message: "Payment Added" });

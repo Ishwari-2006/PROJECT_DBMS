@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -11,6 +12,8 @@ function Meters({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("meter_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const [form, setForm] = useState({
     meter_number: "",
@@ -46,8 +49,17 @@ function Meters({ department }) {
   }, [fetchData]);
 
   const handleSubmit = async () => {
+    setError("");
+    
     if (!form.meter_number || !form.installation_date || !form.meter_status || !form.connection_id) {
-      alert("Please fill all meter fields.");
+      setError("Please fill all meter fields.");
+      return;
+    }
+
+    // Validate installation_date is not in future
+    const dateError = validateDateNotFuture(form.installation_date);
+    if (dateError) {
+      setError(dateError);
       return;
     }
 
@@ -68,7 +80,7 @@ function Meters({ department }) {
       setShowForm(false);
       fetchData();
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save meter");
+      setError(err?.response?.data?.message || "Failed to save meter");
     }
   };
 
@@ -167,6 +179,7 @@ function Meters({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <input
             className="full-span"
@@ -176,6 +189,7 @@ function Meters({ department }) {
           />
           <input
             type="date"
+            max={todayDate}
             value={form.installation_date}
             onChange={(e) => setForm({ ...form, installation_date: e.target.value })}
           />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { getTodayDateString, validateDateNotFuture } from "../utils/dateValidation";
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
@@ -10,6 +11,8 @@ function Records({ department }) {
   const [showForm, setShowForm] = useState(false);
   const [searchField, setSearchField] = useState("reading_id");
   const [searchTerm, setSearchTerm] = useState("");
+  const [error, setError] = useState("");
+  const todayDate = getTodayDateString();
 
   const [form, setForm] = useState({
     meter_id: "",
@@ -68,13 +71,22 @@ function Records({ department }) {
 
   // ADD / UPDATE
   const handleSubmit = async () => {
+    setError("");
+    
     if (
       !form.meter_id ||
       !form.reading_date ||
       form.current_reading === "" ||
       form.consumption_units === ""
     ) {
-      alert("Fill all fields");
+      setError("Fill all fields");
+      return;
+    }
+
+    // Validate reading_date is not in future
+    const dateError = validateDateNotFuture(form.reading_date);
+    if (dateError) {
+      setError(dateError);
       return;
     }
 
@@ -96,7 +108,7 @@ function Records({ department }) {
           const reasonSuffix = autoBill && !autoBill.created && autoBill.reason
             ? ` (${autoBill.reason})`
             : "";
-          alert(`${apiMessage}${reasonSuffix}`);
+          setError(`${apiMessage}${reasonSuffix}`);
         }
         console.log("Added");
       }
@@ -114,7 +126,7 @@ function Records({ department }) {
       fetchRecords();
 
     } catch (err) {
-      alert(err?.response?.data?.message || "Failed to save record");
+      setError(err?.response?.data?.message || "Failed to save record");
     }
   };
 
@@ -219,6 +231,7 @@ function Records({ department }) {
           </>
         )}
       >
+        {error && <p style={{color: '#ef4444', fontWeight: 600, marginBottom: '10px'}}>{error}</p>}
         <div className="modal-grid">
           <select
             className="full-span"
@@ -236,6 +249,7 @@ function Records({ department }) {
 
           <input
             type="date"
+            max={todayDate}
             name="reading_date"
             value={form.reading_date}
             onChange={handleChange}
