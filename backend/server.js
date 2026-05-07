@@ -1,19 +1,29 @@
-console.log("🔥 THIS IS MY SERVER FILE");
+// Server entry point for the Express API.
+// This file contains route handlers and helper utilities used by the frontend.
+// Keep sensitive logic (DB access, authorization) here so the client never
+// directly communicates with the database.
+console.log("THIS IS MY SERVER FILE");
 const express = require("express");
 const db = require("./db");
 const cors = require("cors");
 
 const app = express();
 
+// Middleware setup:
+// - CORS: allow cross-origin requests from the frontend during development
+// - express.json/express.urlencoded: parse JSON and form bodies into req.body
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 5000;
 
+// sendError: standardize error responses returned to the client
 const sendError = (res, message, err, status = 500) =>
   res.status(status).json({ message, error: err?.message || err });
 
+// dbQuery: promise wrapper around `db.query` so we can use async/await style
+// throughout server code. Example: const rows = await dbQuery(sql, params)
 const dbQuery = (sql, params = []) =>
   new Promise((resolve, reject) => {
     db.query(sql, params, (err, result) => {
@@ -25,6 +35,8 @@ const dbQuery = (sql, params = []) =>
     });
   });
 
+// Transaction helpers: beginTransaction, commitTransaction and rollbackTransaction
+// are used to ensure groups of related DB changes succeed or fail atomically.
 const beginTransaction = () =>
   new Promise((resolve, reject) => {
     db.beginTransaction((err) => {
@@ -54,6 +66,9 @@ const rollbackTransaction = () =>
     });
   });
 
+// nextId returns the next numeric id for a table by using MAX(id)+1.
+// Note: this is simple but not safe under high-concurrency; prefer
+// auto-increment primary keys for production systems.
 const nextId = async (tableName, idColumn) => {
   const rows = await dbQuery(
     `SELECT COALESCE(MAX(${idColumn}), 0) + 1 AS next_id FROM ${tableName}`
@@ -61,6 +76,8 @@ const nextId = async (tableName, idColumn) => {
   return Number(rows[0].next_id);
 };
 
+// getReadingTableName: detect whether the DB uses the modern `Reading_Record`
+// table name or the legacy `Consumption_Record` name. Cache result for efficiency.
 let readingTableCache = null;
 const getReadingTableName = async () => {
   if (readingTableCache) {
@@ -82,6 +99,8 @@ const getReadingTableName = async () => {
   throw new Error("Reading record table not found");
 };
 
+// normalizeSqlDate: accept multiple human-friendly date formats and return
+// a normalized 'YYYY-MM-DD' string suitable for SQL insertion, or null.
 const normalizeSqlDate = (value) => {
   if (!value) {
     return null;
@@ -121,8 +140,10 @@ const normalizeSqlDate = (value) => {
   return null;
 };
 
+// Allowed tenancy departments — everything is scoped by department.
 const ALLOWED_DEPARTMENTS = ["Electricity", "Gas", "Water"];
 
+// normalizeDepartment: validate and canonicalize department names from headers.
 const normalizeDepartment = (value) => {
   if (!value) {
     return null;
@@ -133,6 +154,7 @@ const normalizeDepartment = (value) => {
   return match || null;
 };
 
+// Read department from request header and require it where needed.
 const getDepartmentFromRequest = (req) => normalizeDepartment(req.headers["x-department"]);
 
 const requireDepartment = (req, res) => {
@@ -144,6 +166,8 @@ const requireDepartment = (req, res) => {
   return department;
 };
 
+// ensureWriteAccess: placeholder for permission checks (e.g., roles).
+// Currently returns true; keep here so future auth integration is easier.
 const ensureWriteAccess = () => {
   return true;
 };
@@ -372,6 +396,10 @@ app.get("/test", (req, res) => {
   res.send("TEST OK");
 });
 
+// SEARCH: Consumer quick-search endpoint
+// - Query param: `q` (partial name, contact, or consumer_id)
+// - Requires `x-department` header to scope results to a service type
+// - Returns up to 25 matching consumers with connection and unpaid summary
 app.get("/search/consumers", async (req, res) => {
   const department = requireDepartment(req, res);
   if (!department) {
@@ -536,92 +564,6 @@ app.get("/consumers/:id/profile", async (req, res) => {
   }
 });
 
-app.get("/alerts", async (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
-
-  try {
-    const readingTable = await getReadingTableName();
-    const [overdueBills, disconnectedConnections, noRecentReading, highConsumption] = await Promise.all([
-      dbQuery(
-        `SELECT
-          b.bill_id,
-          b.bill_number,
-          b.due_date,
-          b.total_amount,
-          c.consumer_id,
-          c.name AS consumer_name,
-          sc.connection_id
-         FROM Bill b
-         JOIN Service_Connection sc ON sc.connection_id = b.connection_id
-         JOIN Consumer c ON c.consumer_id = sc.consumer_id
-         WHERE sc.service_type = ?
-           AND b.payment_status <> 'Paid'
-           AND b.due_date < CURDATE()
-         ORDER BY b.due_date ASC
-         LIMIT 25`,
-        [department]
-      ),
-      dbQuery(
-        `SELECT
-          sc.connection_id,
-          sc.connection_status,
-          c.consumer_id,
-          c.name AS consumer_name,
-          sc.installation_address
-         FROM Service_Connection sc
-         JOIN Consumer c ON c.consumer_id = sc.consumer_id
-         WHERE sc.service_type = ? AND sc.connection_status = 'Disconnected'
-         ORDER BY sc.connection_id DESC
-         LIMIT 25`,
-        [department]
-      ),
-      dbQuery(
-        `SELECT
-          m.meter_id,
-          m.meter_number,
-          c.consumer_id,
-          c.name AS consumer_name,
-          MAX(r.reading_date) AS last_reading_date
-         FROM Meter m
-         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
-         JOIN Consumer c ON c.consumer_id = sc.consumer_id
-         LEFT JOIN ${readingTable} r ON r.meter_id = m.meter_id
-         WHERE sc.service_type = ?
-         GROUP BY m.meter_id, m.meter_number, c.consumer_id, c.name
-         HAVING last_reading_date IS NULL OR last_reading_date < DATE_SUB(CURDATE(), INTERVAL 45 DAY)
-         ORDER BY last_reading_date ASC
-         LIMIT 25`,
-        [department]
-      ),
-      dbQuery(
-        `SELECT
-          r.reading_id,
-          r.reading_date,
-          r.consumption_units,
-          m.meter_id,
-          c.consumer_id,
-          c.name AS consumer_name
-         FROM ${readingTable} r
-         JOIN Meter m ON m.meter_id = r.meter_id
-         JOIN Service_Connection sc ON sc.connection_id = m.connection_id
-         JOIN Consumer c ON c.consumer_id = sc.consumer_id
-         WHERE sc.service_type = ?
-           AND r.reading_date >= DATE_SUB(CURDATE(), INTERVAL 31 DAY)
-           AND r.consumption_units > 1000
-         ORDER BY r.consumption_units DESC
-         LIMIT 25`,
-        [department]
-      )
-    ]);
-
-    res.json({ overdueBills, disconnectedConnections, noRecentReading, highConsumption });
-  } catch (error) {
-    return sendError(res, "Failed to fetch alerts", error);
-  }
-});
 
 app.get("/reports/department-summary", async (req, res) => {
   const department = requireDepartment(req, res);
@@ -688,64 +630,10 @@ app.get("/reports/department-summary", async (req, res) => {
   }
 });
 
-app.get("/reports/department-summary/export.csv", async (req, res) => {
-  const department = requireDepartment(req, res);
-  if (!department) {
-    return;
-  }
 
-  try {
-    const summaryRows = await dbQuery(
-      `SELECT
-        b.bill_id,
-        b.bill_number,
-        b.billing_period,
-        b.total_amount,
-        b.due_date,
-        b.payment_status,
-        sc.connection_id,
-        c.consumer_id,
-        c.name AS consumer_name
-       FROM Bill b
-       JOIN Service_Connection sc ON sc.connection_id = b.connection_id
-       JOIN Consumer c ON c.consumer_id = sc.consumer_id
-       WHERE sc.service_type = ?
-       ORDER BY b.bill_id DESC`,
-      [department]
-    );
-
-    const headers = [
-      "bill_id",
-      "bill_number",
-      "billing_period",
-      "total_amount",
-      "due_date",
-      "payment_status",
-      "connection_id",
-      "consumer_id",
-      "consumer_name"
-    ];
-
-    const csvRows = [
-      headers.join(","),
-      ...summaryRows.map((row) =>
-        headers
-          .map((header) => {
-            const value = row[header] == null ? "" : String(row[header]).replace(/"/g, '""');
-            return `"${value}"`;
-          })
-          .join(",")
-      )
-    ];
-
-    res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename=${department.toLowerCase()}-billing-report.csv`);
-    res.send(csvRows.join("\n"));
-  } catch (error) {
-    return sendError(res, "Failed to export report", error);
-  }
-});
-
+// DASHBOARD: Aggregated summary metrics for a department
+// - Expects `x-department` header to restrict data
+// - Returns counts for consumers, connections, active meters, pending bills and total revenue
 app.get("/dashboard/summary", async (req, res) => {
   const department = requireDepartment(req, res);
   if (!department) {

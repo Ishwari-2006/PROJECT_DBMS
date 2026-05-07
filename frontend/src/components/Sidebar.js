@@ -18,8 +18,8 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand-block">
-        <h2>GridFlow</h2>
-        <p>Utility Suite</p>
+        <h2>UtilityTrack</h2>
+        <p>UtilityTrack Suite</p>
       </div>
 
       <ul className="sidebar-nav">

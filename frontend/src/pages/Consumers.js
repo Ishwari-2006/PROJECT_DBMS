@@ -1,12 +1,19 @@
+// React and HTTP client
 import { useEffect, useState } from "react";
 import axios from "axios";
+
+// Shared UI components used across pages
 import TableControls from "../components/TableControls";
 import Modal from "../components/Modal";
 import TableSearch from "../components/TableSearch";
 
 function Consumers() {
+  // Local component state
+  // `data`: consumer rows fetched from API
   const [data, setData] = useState([]);
+  // `showForm`: controls modal visibility for insert/edit
   const [showForm, setShowForm] = useState(false);
+  // `searchField` / `searchTerm`: client-side filtering controls
   const [searchField, setSearchField] = useState("consumer_id");
   const [searchTerm, setSearchTerm] = useState("");
   const [form, setForm] = useState({
@@ -18,10 +25,15 @@ function Consumers() {
   });
   const [editId, setEditId] = useState(null);
 
+  // On mount fetch the consumer list once.
   useEffect(() => {
     fetchConsumers();
   }, []);
 
+  // fetchConsumers: loads consumers from the backend API.
+  // It tries to use a globally set axios default header first, then falls
+  // back to parsing `localStorage.ubms_session` for the department value.
+  // The department is sent as `x-department` to scope the results.
   const fetchConsumers = () => {
     const session = (() => {
       try { return JSON.parse(localStorage.getItem("ubms_session") || "null"); } catch { return null; }
@@ -33,10 +45,13 @@ function Consumers() {
       .catch(() => setData([]));
   };
 
+  // Generic handler for controlled form inputs used in the modal.
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
+  // handleSubmit: validate and send create/update requests to the API.
+  // Uses POST for create and PUT for update (when editId is set).
   const handleSubmit = async () => {
     if (!form.name || !form.address || !form.registration_date) {
       alert("Fill all fields");
@@ -52,7 +67,7 @@ function Consumers() {
         console.log("Added");
       }
 
-      // reset
+      // reset form state and refresh list
       setEditId(null);
       setForm({
         name: "",
@@ -70,6 +85,7 @@ function Consumers() {
     }
   };
 
+  // Delete consumer by id and refresh the list.
   const handleDelete = async (id) => {
     try {
       await axios.delete(`http://127.0.0.1:5000/consumers/${id}`);
@@ -79,6 +95,7 @@ function Consumers() {
     }
   };
 
+  // Pre-fill the modal form with existing consumer data for editing.
   const handleEditById = (id) => {
     const consumer = data.find((c) => Number(c.consumer_id) === Number(id));
     if (!consumer) {
@@ -106,6 +123,7 @@ function Consumers() {
     await handleDelete(consumer.consumer_id);
   };
 
+  // Client-side filtering for quick search responsiveness.
   const filteredData = data.filter((consumer) => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) {

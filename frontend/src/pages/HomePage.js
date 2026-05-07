@@ -30,14 +30,14 @@ const facilities = [
 function HomePage() {
   return (
     <div className="home-shell">
-      <div className="home-logo" aria-label="GridFlow logo">
-        GF
+      <div className="home-logo" aria-label="UtilityTrack logo">
+        UT
       </div>
 
       <div className="home-overlay" />
 
       <main className="home-content">
-        <p className="home-kicker">GridFlow Utility Suite</p>
+        <p className="home-kicker">UtilityTrack Suite</p>
         <h1>Powerful Utility Operations, One Unified Platform</h1>
         <p className="home-subtitle">
           From consumer onboarding to tariff-driven billing and payment closure, run every utility workflow in one place.

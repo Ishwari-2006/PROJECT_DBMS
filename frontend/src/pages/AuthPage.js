@@ -314,7 +314,7 @@ function AuthPage({ onAuthSuccess }) {
       <Link to="/" className="auth-screen-back">Back</Link>
 
       <div className="auth-hero">
-        <h1>GridFlow Utility</h1>
+        <h1>UtilityTrack</h1>
         <p>Secure utility operations with smart billing, meter tracking, and payment workflows.</p>
       </div>
 

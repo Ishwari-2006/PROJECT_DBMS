@@ -57,7 +57,7 @@ function App() {
           <main className="app-main">
             <header className="app-topbar">
               <div>
-                <h1>Utility Billing Management System</h1>
+                <h1>UtilityTrack</h1>
                 <p>Manage consumers, usage, billing, and payments in one unified dashboard.</p>
               </div>
               <div className="topbar-actions">

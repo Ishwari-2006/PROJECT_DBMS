@@ -1,6 +1,8 @@
+// ConsumerSearch workbench: lightweight search UI and profile viewer.
 import { useState } from "react";
 import axios from "axios";
 
+// Reusable presentational table used to render connections, meters, bills, etc.
 function DataTable({ title, rows, columns, className = "" }) {
   return (
     <div className={`ops-card ${className}`.trim()}>
@@ -34,12 +36,19 @@ function DataTable({ title, rows, columns, className = "" }) {
 }
 
 function ConsumerSearch() {
+  // Component state:
+  // `query`: search input; `results`: search hits from /search/consumers
+  // `selectedId` / `profile`: currently opened consumer profile; `error` for messages
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
 
+  // handleSearch: call the server-side search endpoint which performs
+  // a LIKE query across name/contact/id and returns aggregated fields
+  // (total_connections, active_connections, unpaid_amount). We limit
+  // results on the server to keep responses small and snappy.
   const handleSearch = async (e) => {
     e.preventDefault();
     setError("");
@@ -60,6 +69,10 @@ function ConsumerSearch() {
     }
   };
 
+  // openProfile: fetch the detailed consumer profile which joins data from
+  // Service_Connection, Meter, reading table (via getReadingTableName()),
+  // Bill, Payment and Tariff tables. This is a single endpoint that returns
+  // multiple related datasets so the UI can render a unified profile view.
   const openProfile = async (consumerId) => {
     setError("");
     setSelectedId(consumerId);
