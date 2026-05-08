@@ -12,7 +12,14 @@ function ReportsPage() {
     e.preventDefault();
     setError("");
 
-    // Validate dates are not in future
+    // Require both dates to be provided
+    if (!form.from || !form.to) {
+      setError("Please select both start and end dates for the report.");
+      setSummary(null);
+      return;
+    }
+
+    // Validate dates are not in future and range is valid
     const dateValidationError = validateDateRange(form.from, form.to);
     if (dateValidationError) {
       setError(dateValidationError);
